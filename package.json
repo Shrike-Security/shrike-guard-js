@@ -1,0 +1,99 @@
+{
+  "name": "shrike-guard",
+  "version": "1.0.1",
+  "description": "Shrike Security SDK - Protect your LLM applications (OpenAI, Claude, Gemini) from prompt injection, PII leakage, and jailbreaks",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./openai": {
+      "types": "./dist/openai/index.d.ts",
+      "import": "./dist/openai/index.mjs",
+      "require": "./dist/openai/index.js"
+    },
+    "./anthropic": {
+      "types": "./dist/anthropic/index.d.ts",
+      "import": "./dist/anthropic/index.mjs",
+      "require": "./dist/anthropic/index.js"
+    },
+    "./gemini": {
+      "types": "./dist/gemini/index.d.ts",
+      "import": "./dist/gemini/index.mjs",
+      "require": "./dist/gemini/index.js"
+    },
+    "./api": {
+      "types": "./dist/api/index.d.ts",
+      "import": "./dist/api/index.mjs",
+      "require": "./dist/api/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "jest",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "openai",
+    "anthropic",
+    "claude",
+    "gemini",
+    "security",
+    "llm",
+    "prompt-injection",
+    "pii",
+    "jailbreak",
+    "ai-safety"
+  ],
+  "author": "Shrike Security <security@shrike.com>",
+  "license": "Apache-2.0",
+  "homepage": "https://shrike.security",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shrike-security/shrike-guard"
+  },
+  "bugs": {
+    "url": "https://github.com/shrike-security/shrike-guard/issues"
+  },
+  "peerDependencies": {
+    "openai": ">=4.0.0",
+    "@anthropic-ai/sdk": ">=0.18.0",
+    "@google/generative-ai": ">=0.3.0"
+  },
+  "peerDependenciesMeta": {
+    "openai": {
+      "optional": true
+    },
+    "@anthropic-ai/sdk": {
+      "optional": true
+    },
+    "@google/generative-ai": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.12",
+    "@types/node": "^20.11.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.2",
+    "tsup": "^8.0.2",
+    "typescript": "^5.3.3",
+    "openai": "^4.28.0",
+    "@anthropic-ai/sdk": "^0.20.0",
+    "@google/generative-ai": "^0.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
