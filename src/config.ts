@@ -30,8 +30,8 @@ export const DEFAULT_FAIL_MODE = FailMode.OPEN;
 /** Default Shrike API endpoint (uses load balancer for scalability) */
 export const DEFAULT_ENDPOINT = 'https://api.shrikesecurity.com/agent';
 
-// Note: All scanning is done via backend API (tier-based: free=L1-L4, paid=L1-L8)
-// No local patterns needed - backend handles all detection logic
+// Note: All scanning is done via backend API. All tiers get full 9-layer cascade (L1-L8).
+// Enterprise tier includes priority processing, higher rate limits, and custom policies.
 
 /** SDK identification */
 export const SDK_NAME = 'typescript';

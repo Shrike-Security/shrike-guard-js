@@ -1,6 +1,6 @@
 {
   "name": "shrike-guard",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Shrike Security SDK - Protect your LLM applications (OpenAI, Claude, Gemini) from prompt injection, PII leakage, and jailbreaks",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

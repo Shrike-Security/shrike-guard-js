@@ -20,6 +20,21 @@
 - **Subpath imports**: `shrike-guard/openai`, `shrike-guard/anthropic`, `shrike-guard/gemini`
 - **Zero code changes**: Just replace your import
 
+## What Shrike Detects
+
+Shrike's backend runs a 9-layer detection cascade with **86+ security rules** across **6 compliance frameworks**:
+
+| Framework | Rules | Coverage |
+|-----------|-------|----------|
+| **HIPAA** | 19 | Protected health information (PHI) — 19 Safe Harbor identifiers |
+| **SOC 2** | 21 | Secrets, credentials, API keys, cloud tokens |
+| **ISO 27001** | 19 | Information security — passwords, tokens, certificates |
+| **PCI-DSS** | 8 | Cardholder data — PAN, CVV, expiry, track data, PINs |
+| **GDPR** | 11 | EU personal data — names, addresses, national IDs |
+| **WebMCP Tool Safety** | 8 | MCP tool description injection, data exfiltration |
+
+Plus built-in detection for prompt injection, jailbreaks, social engineering, dangerous requests, and 130+ threat patterns.
+
 ## Installation
 
 ```bash
@@ -253,5 +268,5 @@ Apache 2.0
 ## Support
 
 - Documentation: https://docs.shrike.security/sdk/typescript
-- Issues: https://github.com/shrike-security/shrike-guard/issues
+- Issues: https://github.com/Shrike-Security/shrike-guard-js/issues
 - Email: support@shrike.security
