@@ -255,11 +255,18 @@ export function bucketConfidence(score?: number): string {
 export function sanitizeScanResponse(raw: ScanResult): ScanResult {
   const safe = raw.safe !== false;
 
+  // Pass through approval_info if present (not an IP concern)
+  const approvalInfo = raw.approval_info;
+
   if (safe) {
-    return {
+    const result: ScanResult = {
       safe: true,
       reason: raw.reason || '',
     };
+    if (approvalInfo) {
+      result.approval_info = approvalInfo;
+    }
+    return result;
   }
 
   // Unsafe: normalize and sanitize
@@ -274,7 +281,7 @@ export function sanitizeScanResponse(raw: ScanResult): ScanResult {
   const guidance =
     THREAT_GUIDANCE[threatType] || THREAT_GUIDANCE['unknown'];
 
-  return {
+  const result: ScanResult = {
     safe: false,
     threat_type: threatType,
     severity: severity,
@@ -282,6 +289,10 @@ export function sanitizeScanResponse(raw: ScanResult): ScanResult {
     reason: raw.reason || guidance,
     guidance: guidance,
   };
+  if (approvalInfo) {
+    result.approval_info = approvalInfo;
+  }
+  return result;
 }
 
 export { THREAT_TYPE_MAP, THREAT_GUIDANCE, THREAT_SEVERITY, INTERNAL_FIELDS };

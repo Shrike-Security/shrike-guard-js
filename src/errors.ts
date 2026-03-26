@@ -79,3 +79,19 @@ export class ShrikeConfigError extends ShrikeError {
     this.name = 'ShrikeConfigError';
   }
 }
+
+/**
+ * Raised when the client-side rate limit is exceeded.
+ */
+export class ShrikeRateLimitError extends ShrikeError {
+  /** Milliseconds until the next request will be allowed */
+  public readonly retryAfterMs: number;
+
+  constructor(retryAfterMs: number) {
+    super(`Rate limit exceeded. Retry after ${retryAfterMs}ms`, {
+      retry_after_ms: retryAfterMs,
+    });
+    this.name = 'ShrikeRateLimitError';
+    this.retryAfterMs = retryAfterMs;
+  }
+}

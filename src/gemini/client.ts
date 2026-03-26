@@ -7,10 +7,12 @@ import {
   DEFAULT_ENDPOINT,
   DEFAULT_FAIL_MODE,
   DEFAULT_SCAN_TIMEOUT,
+  getSessionId,
+  getAgentId,
 } from '../config';
 import { ShrikeBlockedError, ShrikeScanError } from '../errors';
 import { sanitizeScanResponse } from '../sanitizer';
-import { getScanHeaders, ScanResult } from '../scanner';
+import { getScanHeaders, maybeAddSignupHint, ScanResult } from '../scanner';
 
 /**
  * Simple logger for warnings.
@@ -111,8 +113,13 @@ export class ShrikeGemini {
         : options.failMode || DEFAULT_FAIL_MODE;
     this._scanTimeout = options.scanTimeout || DEFAULT_SCAN_TIMEOUT;
 
-    // Note: All scanning is done via backend API (tier-based: free=L1-L4, paid=L1-L8)
+    // Note: All scanning is done via backend API (tier-based: community=L1-L4, pro=L1-L8)
     // No local scanning - backend has full regex patterns (~50+) and normalizers
+
+    if (!this._shrikeApiKey) {
+      console.warn('[shrike-guard] No shrikeApiKey provided — running in free tier (regex-only).');
+      console.warn('[shrike-guard] For full scanning (LLM analysis, session correlation): npx shrike-mcp --signup');
+    }
 
     // Dynamically import Google Generative AI
     try {
@@ -176,8 +183,8 @@ export class ShrikeGemini {
    * Scan content before sending to Gemini via backend API.
    *
    * Always calls backend - backend handles tier-based scanning:
-   * - Free tier (no API key): L1-L4 (regex, unicode, encoding, token normalization)
-   * - Paid tier: L1-L8 (full scan including LLM)
+   * - Community tier (no API key): L1-L4 (regex, unicode, encoding, token normalization)
+   * - Pro tier: L1-L8 (full scan including LLM)
    */
   async _scanContent(contents: GeminiContent): Promise<ScanResult> {
     const textContent = this._extractContent(contents);
@@ -202,7 +209,14 @@ export class ShrikeGemini {
       const response = await fetch(`${this._shrikeEndpoint}/scan`, {
         method: 'POST',
         headers: getScanHeaders(this._shrikeApiKey),
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({
+          prompt,
+          context: {
+            session_id: getSessionId(),
+            agent_id: getAgentId(),
+            source_application: 'shrike-guard-ts',
+          },
+        }),
         signal: controller.signal,
       });
 
@@ -213,7 +227,7 @@ export class ShrikeGemini {
         throw new ShrikeScanError(`Scan API returned error: ${response.status}`);
       }
 
-      return sanitizeScanResponse((await response.json()) as ScanResult);
+      return maybeAddSignupHint(sanitizeScanResponse((await response.json()) as ScanResult), this._shrikeApiKey);
     } catch (error) {
       if (error instanceof ShrikeScanError) {
         throw error;

@@ -34,8 +34,8 @@ describe('Configuration Constants', () => {
     expect(DEFAULT_SCAN_TIMEOUT).toBe(10000);
   });
 
-  it('should default to fail-open mode', () => {
-    expect(DEFAULT_FAIL_MODE).toBe(FailMode.OPEN);
+  it('should default to fail-closed mode', () => {
+    expect(DEFAULT_FAIL_MODE).toBe(FailMode.CLOSED);
   });
 
   it('should have SDK identification', () => {

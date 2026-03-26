@@ -148,9 +148,13 @@ describe('ShrikeAnthropic', () => {
         expect.stringContaining('/scan'),
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ prompt: 'Hello!' }),
         })
       );
+      // Verify body contains prompt and session context
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.prompt).toBe('Hello!');
+      expect(callBody.context.session_id).toBeDefined();
+      expect(callBody.context.source_application).toBe('shrike-guard-ts');
     });
 
     it('should fail open on timeout by default', async () => {

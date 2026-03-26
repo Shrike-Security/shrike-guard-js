@@ -18,7 +18,8 @@
  */
 
 // Configuration
-export { FailMode, DEFAULT_ENDPOINT, DEFAULT_SCAN_TIMEOUT, DEFAULT_FAIL_MODE } from './config';
+export { FailMode, DEFAULT_ENDPOINT, DEFAULT_SCAN_TIMEOUT, DEFAULT_FAIL_MODE, getSessionId, getAgentId } from './config';
+export type { ApprovalInfo } from './config';
 
 // Errors
 export {
@@ -26,11 +27,15 @@ export {
   ShrikeScanError,
   ShrikeBlockedError,
   ShrikeConfigError,
+  ShrikeRateLimitError,
 } from './errors';
 
 // Scanner
-export { ScanClient, getScanHeaders } from './scanner';
-export type { ScanResult, ScanClientOptions } from './scanner';
+export { ScanClient, getScanHeaders, maybeAddSignupHint } from './scanner';
+export type { ScanResult, ScanClientOptions, CorrelationPattern } from './scanner';
+
+// Rate Limiter
+export { RateLimiter } from './rateLimiter';
 
 // Sanitizer (IP protection)
 export { sanitizeScanResponse, normalizeThreatType, bucketConfidence, deriveSeverity } from './sanitizer';

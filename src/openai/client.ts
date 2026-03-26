@@ -17,10 +17,12 @@ import {
   DEFAULT_ENDPOINT,
   DEFAULT_FAIL_MODE,
   DEFAULT_SCAN_TIMEOUT,
+  getSessionId,
+  getAgentId,
 } from '../config';
 import { ShrikeBlockedError, ShrikeScanError } from '../errors';
 import { sanitizeScanResponse } from '../sanitizer';
-import { getScanHeaders, ScanResult } from '../scanner';
+import { getScanHeaders, maybeAddSignupHint, ScanResult } from '../scanner';
 
 /**
  * Simple logger for warnings.
@@ -114,8 +116,13 @@ export class ShrikeOpenAI {
         : options.failMode || DEFAULT_FAIL_MODE;
     this._scanTimeout = options.scanTimeout || DEFAULT_SCAN_TIMEOUT;
 
-    // Note: All scanning is done via backend API (tier-based: free=L1-L4, paid=L1-L8)
+    // Note: All scanning is done via backend API (tier-based: community=L1-L4, pro=L1-L8)
     // No local scanning - backend has full regex patterns (~50+) and normalizers
+
+    if (!this._shrikeApiKey) {
+      console.warn('[shrike-guard] No shrikeApiKey provided — running in free tier (regex-only).');
+      console.warn('[shrike-guard] For full scanning (LLM analysis, session correlation): npx shrike-mcp --signup');
+    }
 
     // Expose chat interface
     this.chat = new ChatNamespace(this);
@@ -149,8 +156,8 @@ export class ShrikeOpenAI {
    * Scan user messages for security threats via backend API.
    *
    * Always calls backend - backend handles tier-based scanning:
-   * - Free tier (no API key): L1-L4 (regex, unicode, encoding, token normalization)
-   * - Paid tier: L1-L8 (full scan including LLM)
+   * - Community tier (no API key): L1-L4 (regex, unicode, encoding, token normalization)
+   * - Pro tier: L1-L8 (full scan including LLM)
    */
   async _scanMessages(messages: ChatMessage[]): Promise<ScanResult> {
     const userContent = this._extractUserContent(messages);
@@ -175,7 +182,14 @@ export class ShrikeOpenAI {
       const response = await fetch(`${this._shrikeEndpoint}/scan`, {
         method: 'POST',
         headers: getScanHeaders(this._shrikeApiKey),
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({
+          prompt,
+          context: {
+            session_id: getSessionId(),
+            agent_id: getAgentId(),
+            source_application: 'shrike-guard-ts',
+          },
+        }),
         signal: controller.signal,
       });
 
@@ -186,7 +200,7 @@ export class ShrikeOpenAI {
         throw new ShrikeScanError(`Scan API returned error: ${response.status}`);
       }
 
-      return sanitizeScanResponse((await response.json()) as ScanResult);
+      return maybeAddSignupHint(sanitizeScanResponse((await response.json()) as ScanResult), this._shrikeApiKey);
     } catch (error) {
       if (error instanceof ShrikeScanError) {
         throw error;
@@ -238,6 +252,9 @@ export class ShrikeOpenAI {
           context: {
             database: database || '',
             allow_destructive: String(allowDestructive),
+            session_id: getSessionId(),
+            agent_id: getAgentId(),
+            source_application: 'shrike-guard-ts',
           },
         }),
         signal: controller.signal,
@@ -250,7 +267,7 @@ export class ShrikeOpenAI {
         throw new ShrikeScanError(`SQL scan API returned error: ${response.status}`);
       }
 
-      return sanitizeScanResponse((await response.json()) as ScanResult);
+      return maybeAddSignupHint(sanitizeScanResponse((await response.json()) as ScanResult), this._shrikeApiKey);
     } catch (error) {
       if (error instanceof ShrikeScanError) {
         throw error;
@@ -279,7 +296,18 @@ export class ShrikeOpenAI {
       content_type: contentType,
     };
     if (content) {
-      payload.context = { file_content: content };
+      payload.context = {
+        file_content: content,
+        session_id: getSessionId(),
+        agent_id: getAgentId(),
+        source_application: 'shrike-guard-ts',
+      };
+    } else {
+      payload.context = {
+        session_id: getSessionId(),
+        agent_id: getAgentId(),
+        source_application: 'shrike-guard-ts',
+      };
     }
 
     const controller = new AbortController();
@@ -300,7 +328,7 @@ export class ShrikeOpenAI {
         throw new ShrikeScanError(`File scan API returned error: ${response.status}`);
       }
 
-      return sanitizeScanResponse((await response.json()) as ScanResult);
+      return maybeAddSignupHint(sanitizeScanResponse((await response.json()) as ScanResult), this._shrikeApiKey);
     } catch (error) {
       if (error instanceof ShrikeScanError) {
         throw error;

@@ -123,7 +123,11 @@ describe('Scan Flow Integration', () => {
 
       const requests = server.getRequests();
       const body = JSON.parse(requests[0].body);
-      expect(body.context).toBe('Previous conversation context');
+      // Conversation context is now in conversation_history field
+      expect(body.conversation_history).toBe('Previous conversation context');
+      // Session context is in context object
+      expect(body.context.session_id).toBeDefined();
+      expect(body.context.source_application).toBe('shrike-guard-ts');
     });
   });
 });

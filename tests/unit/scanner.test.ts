@@ -74,9 +74,14 @@ describe('ScanClient', () => {
         `${DEFAULT_ENDPOINT}/scan`,
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ prompt: 'Hello, world!' }),
         })
       );
+      // Verify body contains expected fields including session context
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.prompt).toBe('Hello, world!');
+      expect(callBody.context.session_id).toBeDefined();
+      expect(callBody.context.agent_id).toBeDefined();
+      expect(callBody.context.source_application).toBe('shrike-guard-ts');
     });
 
     it('should include context when provided', async () => {
@@ -88,12 +93,11 @@ describe('ScanClient', () => {
       const client = new ScanClient({ apiKey: 'test-key' });
       await client.scan('Test prompt', 'Test context');
 
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          body: JSON.stringify({ prompt: 'Test prompt', context: 'Test context' }),
-        })
-      );
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.prompt).toBe('Test prompt');
+      expect(callBody.conversation_history).toBe('Test context');
+      expect(callBody.context.session_id).toBeDefined();
+      expect(callBody.context.source_application).toBe('shrike-guard-ts');
     });
 
     it('should handle API errors', async () => {
