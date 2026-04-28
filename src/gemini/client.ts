@@ -36,7 +36,7 @@ type GeminiContent = string | ContentPart[] | { parts?: ContentPart[]; text?: st
 
 /**
  * Minimal interface for the underlying Google GenerativeAI client.
- * Defined here to avoid requiring @google/generative-ai at compile time.
+ * Defined here to avoid requiring @google/genai at compile time.
  */
 interface GoogleGenAIClient {
   getGenerativeModel(params: { model: string; [key: string]: unknown }): GoogleGenModel;
@@ -124,11 +124,11 @@ export class ShrikeGemini {
     // Dynamically import Google Generative AI
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { GoogleGenerativeAI } = require('@google/generative-ai');
+      const { GoogleGenerativeAI } = require('@google/genai');
       this._genAI = new GoogleGenerativeAI(this._apiKey) as GoogleGenAIClient;
     } catch {
       throw new Error(
-        '@google/generative-ai package is not installed. Install it with: npm install @google/generative-ai'
+        '@google/genai package is not installed. Install it with: npm install @google/genai'
       );
     }
   }

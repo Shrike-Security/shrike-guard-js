@@ -4,7 +4,7 @@
 [![Node.js 18+](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-**Shrike Guard** is a TypeScript SDK for the [Shrike Security](https://shrikesecurity.com) platform. It wraps OpenAI, Anthropic (Claude), and Google Gemini clients to automatically scan all prompts for security threats before they reach the LLM — using the same 10-layer detection pipeline that powers the MCP server, REST API, and LLM Proxy Gateway.
+**Shrike Guard** is a TypeScript SDK for the [Shrike](https://shrikesecurity.com) platform — AI governance for every AI interaction. It wraps OpenAI, Anthropic (Claude), and Google Gemini clients to automatically evaluate all prompts against policy before they reach the LLM. Whether you're governing a customer-facing chatbot, securing developer AI tools, or managing autonomous agent actions — the same multi-layered cognitive pipeline evaluates every interaction.
 
 ## Features
 
@@ -45,7 +45,7 @@ Detection depth depends on your tier. All tiers get the same SDK wrappers — ti
 | Detection Layers | L1-L5 | L1-L7 | L1-L8 | L1-L9 |
 | API Key | Not needed | Free signup | Paid | Paid |
 | Rate Limit | — | 10/min | 100/min | 1,000/min |
-| Scans/month | — | 1,000 | 50,000 | 1,000,000 |
+| Scans/month | — | 1,000 | 25,000 | 1,000,000 |
 
 **Anonymous** (no API key): Pattern-based detection (L1-L5). **Community** (free): Adds LLM-powered semantic analysis. Register at [shrikesecurity.com/signup](https://shrikesecurity.com/signup) — instant, no credit card.
 
@@ -277,14 +277,36 @@ Shrike Guard focuses on **pre-flight protection** — blocking malicious prompts
 
 ## Other Integration Surfaces
 
-Shrike Guard is one of several ways to integrate with the Shrike Security platform:
+Shrike Guard is one of several ways to integrate with the Shrike platform:
 
 - **MCP Server** — `npx shrike-mcp` ([GitHub](https://github.com/Shrike-Security/shrike-mcp))
 - **Python SDK** — `pip install shrike-guard` ([GitHub](https://github.com/Shrike-Security/shrike-guard-python))
 - **REST API** — `POST https://api.shrikesecurity.com/agent/scan`
-- **LLM Proxy Gateway** — Change one URL, scan everything
+- **LLM Gateway** — Change one URL, scan everything
 - **Browser Extension** — Chrome/Edge for ChatGPT, Claude, Gemini
 - **Dashboard** — [shrikesecurity.com](https://shrikesecurity.com)
+
+## Use Cases
+
+| Scenario | How Shrike Guard Helps |
+|---|---|
+| **Customer chatbot** | Wrap your OpenAI/Anthropic client. Every user message scanned for injection before it reaches the model. |
+| **Internal RAG pipeline** | Scan retrieved context + user queries for PII leakage and injection attempts. |
+| **AI coding assistant** | Scan prompts for proprietary code patterns before they leave your environment. |
+| **Agent orchestration** | Scan every tool call and LLM request in your LangChain/CrewAI/AutoGen pipeline. |
+
+## Alternatives
+
+Looking for an AI security SDK? Here's how Shrike Guard compares:
+
+| Feature | Shrike Guard | Lakera | Prompt Armor |
+|---|---|---|---|
+| Drop-in OpenAI/Anthropic/Gemini wrapper | Yes | No | No |
+| Multi-layered evaluation pipeline | Yes | Limited | Limited |
+| PII detection + redaction | Yes | Partial | No |
+| Session correlation | Yes (Enterprise) | No | No |
+| Free tier (no API key) | Yes | No | No |
+| Open source client | Yes (Apache 2.0) | No | No |
 
 ## License
 
@@ -292,7 +314,8 @@ Apache 2.0
 
 ## Support
 
-- [Shrike Security](https://shrikesecurity.com) — Sign up, dashboard, docs
+- [Shrike](https://shrikesecurity.com) — Sign up, dashboard, docs
+- [Documentation](https://shrikesecurity.com/docs) — Quick start, API reference
 - [GitHub Issues](https://github.com/Shrike-Security/shrike-guard-js/issues) — Bug reports
 - [MCP Server](https://github.com/Shrike-Security/shrike-mcp) — For MCP/agent integration
 - [Python SDK](https://github.com/Shrike-Security/shrike-guard-python) — Python equivalent
