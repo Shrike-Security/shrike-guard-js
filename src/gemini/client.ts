@@ -12,7 +12,7 @@ import {
 } from '../config';
 import { ShrikeBlockedError, ShrikeScanError } from '../errors';
 import { sanitizeScanResponse } from '../sanitizer';
-import { getScanHeaders, maybeAddSignupHint, ScanResult } from '../scanner';
+import { getScanHeaders, isBlocked, maybeAddSignupHint, ScanResult, failOpenResult } from '../scanner';
 
 /**
  * Simple logger for warnings.
@@ -35,29 +35,32 @@ interface ContentPart {
 type GeminiContent = string | ContentPart[] | { parts?: ContentPart[]; text?: string };
 
 /**
- * Minimal interface for the underlying Google GenerativeAI client.
- * Defined here to avoid requiring @google/genai at compile time.
+ * Minimal typings for the current @google/genai (v2+) client surface.
+ * Declared locally so we don't require @google/genai at compile time. The v2
+ * SDK is params-object based (`ai.models.generateContent({ model, contents })`)
+ * and replaced the legacy `@google/generative-ai` `getGenerativeModel()` shape.
+ */
+interface GoogleModels {
+  generateContent(params: { model: string; contents: unknown; [key: string]: unknown }): Promise<unknown>;
+  generateContentStream(params: { model: string; contents: unknown; [key: string]: unknown }): Promise<unknown>;
+}
+
+interface GoogleChat {
+  sendMessage(params: { message: unknown; [key: string]: unknown }): Promise<unknown>;
+  sendMessageStream(params: { message: unknown; [key: string]: unknown }): Promise<unknown>;
+  getHistory?(): unknown[];
+}
+
+interface GoogleChats {
+  create(params: { model: string; [key: string]: unknown }): GoogleChat;
+}
+
+/**
+ * Minimal interface for the underlying `@google/genai` GoogleGenAI client.
  */
 interface GoogleGenAIClient {
-  getGenerativeModel(params: { model: string; [key: string]: unknown }): GoogleGenModel;
-}
-
-/**
- * Minimal interface for Google's GenerativeModel.
- */
-interface GoogleGenModel {
-  generateContent(contents: GeminiContent): Promise<unknown>;
-  generateContentStream(contents: GeminiContent): Promise<unknown>;
-  startChat(options?: Record<string, unknown>): GoogleChatSession;
-}
-
-/**
- * Minimal interface for Google's ChatSession.
- */
-interface GoogleChatSession {
-  sendMessage(content: GeminiContent): Promise<unknown>;
-  sendMessageStream(content: GeminiContent): Promise<unknown>;
-  history: unknown[];
+  models: GoogleModels;
+  chats: GoogleChats;
 }
 
 /**
@@ -121,14 +124,18 @@ export class ShrikeGemini {
       console.warn('[shrike-guard] For full scanning (LLM analysis, session correlation): npx shrike-mcp --signup');
     }
 
-    // Dynamically import Google Generative AI
+    // Dynamically import @google/genai (v2+). The current SDK exports
+    // `GoogleGenAI` and takes an options object — the legacy `GoogleGenerativeAI`
+    // class from `@google/generative-ai` is deprecated and NOT used here.
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { GoogleGenerativeAI } = require('@google/genai');
-      this._genAI = new GoogleGenerativeAI(this._apiKey) as GoogleGenAIClient;
-    } catch {
+      const { GoogleGenAI } = require('@google/genai');
+      this._genAI = new GoogleGenAI({ apiKey: this._apiKey }) as GoogleGenAIClient;
+    } catch (err) {
       throw new Error(
-        '@google/genai package is not installed. Install it with: npm install @google/genai'
+        `@google/genai is not installed or failed to initialize. Install it with: npm install @google/genai${
+          err instanceof Error ? ` (${err.message})` : ''
+        }`
       );
     }
   }
@@ -206,7 +213,7 @@ export class ShrikeGemini {
     const timeoutId = setTimeout(() => controller.abort(), this._scanTimeout);
 
     try {
-      const response = await fetch(`${this._shrikeEndpoint}/scan`, {
+      const response = await fetch(`${this._shrikeEndpoint}/api/scan/enforce`, {
         method: 'POST',
         headers: getScanHeaders(this._shrikeApiKey),
         body: JSON.stringify({
@@ -222,7 +229,7 @@ export class ShrikeGemini {
 
       if (!response.ok) {
         if (this._failMode === FailMode.OPEN) {
-          return { safe: true, reason: `Scan API error: ${response.status}` };
+          return failOpenResult(`Scan API error: ${response.status}`);
         }
         throw new ShrikeScanError(`Scan API returned error: ${response.status}`);
       }
@@ -239,13 +246,13 @@ export class ShrikeGemini {
         if (this._failMode === FailMode.OPEN) {
           // No local fallback - just fail open
           logWarning('Scan request timed out, failing open (allowing request)');
-          return { safe: true, reason: 'Scan timeout, failing open' };
+          return failOpenResult('Scan timeout, failing open');
         }
         throw new ShrikeScanError("Scan request timed out and fail_mode is 'closed'");
       }
 
       if (this._failMode === FailMode.OPEN) {
-        return { safe: true, reason: `Scan error: ${errorMessage}` };
+        return failOpenResult(`Scan error: ${errorMessage}`);
       }
       throw new ShrikeScanError(`Scan failed: ${errorMessage}`);
     } finally {
@@ -265,7 +272,7 @@ export class ShrikeGemini {
 export class ShrikeGenerativeModel {
   private _modelParams: { model: string; [key: string]: unknown };
   private _shrikeClient: ShrikeGemini;
-  private _model: GoogleGenModel;
+  private _models: GoogleModels;
 
   constructor(
     params: { model: string; [key: string]: unknown },
@@ -274,8 +281,9 @@ export class ShrikeGenerativeModel {
     this._modelParams = params;
     this._shrikeClient = shrikeClient;
 
-    // Get the underlying model
-    this._model = this._shrikeClient.genAI.getGenerativeModel(params);
+    // v2 SDK is stateless per call: hold the models module and pass the model
+    // name on each request rather than materializing a per-model object.
+    this._models = this._shrikeClient.genAI.models;
   }
 
   /**
@@ -286,7 +294,7 @@ export class ShrikeGenerativeModel {
     const scanResult = await this._shrikeClient._scanContent(contents);
 
     // 2. Block if unsafe
-    if (!scanResult.safe) {
+    if (isBlocked(scanResult)) {
       throw new ShrikeBlockedError(
         scanResult.reason || 'Request blocked by Shrike',
         scanResult.threat_type,
@@ -296,7 +304,7 @@ export class ShrikeGenerativeModel {
     }
 
     // 3. Proxy to Gemini
-    return this._model.generateContent(contents);
+    return this._models.generateContent({ model: this._modelParams.model, contents });
   }
 
   /**
@@ -307,7 +315,7 @@ export class ShrikeGenerativeModel {
     const scanResult = await this._shrikeClient._scanContent(contents);
 
     // 2. Block if unsafe
-    if (!scanResult.safe) {
+    if (isBlocked(scanResult)) {
       throw new ShrikeBlockedError(
         scanResult.reason || 'Request blocked by Shrike',
         scanResult.threat_type,
@@ -317,14 +325,17 @@ export class ShrikeGenerativeModel {
     }
 
     // 3. Proxy to Gemini
-    return this._model.generateContentStream(contents);
+    return this._models.generateContentStream({ model: this._modelParams.model, contents });
   }
 
   /**
    * Start a chat session with Shrike protection.
    */
   startChat(options?: Record<string, unknown>): ShrikeChatSession {
-    const chat = this._model.startChat(options);
+    const chat = this._shrikeClient.genAI.chats.create({
+      model: this._modelParams.model,
+      ...(options || {}),
+    });
     return new ShrikeChatSession(chat, this._shrikeClient);
   }
 
@@ -337,10 +348,10 @@ export class ShrikeGenerativeModel {
  * Wrapped chat session with Shrike protection.
  */
 export class ShrikeChatSession {
-  private _chat: GoogleChatSession;
+  private _chat: GoogleChat;
   private _shrikeClient: ShrikeGemini;
 
-  constructor(chat: GoogleChatSession, shrikeClient: ShrikeGemini) {
+  constructor(chat: GoogleChat, shrikeClient: ShrikeGemini) {
     this._chat = chat;
     this._shrikeClient = shrikeClient;
   }
@@ -353,7 +364,7 @@ export class ShrikeChatSession {
     const scanResult = await this._shrikeClient._scanContent(content);
 
     // 2. Block if unsafe
-    if (!scanResult.safe) {
+    if (isBlocked(scanResult)) {
       throw new ShrikeBlockedError(
         scanResult.reason || 'Request blocked by Shrike',
         scanResult.threat_type,
@@ -363,7 +374,7 @@ export class ShrikeChatSession {
     }
 
     // 3. Proxy to Gemini
-    return this._chat.sendMessage(content);
+    return this._chat.sendMessage({ message: content });
   }
 
   /**
@@ -374,7 +385,7 @@ export class ShrikeChatSession {
     const scanResult = await this._shrikeClient._scanContent(content);
 
     // 2. Block if unsafe
-    if (!scanResult.safe) {
+    if (isBlocked(scanResult)) {
       throw new ShrikeBlockedError(
         scanResult.reason || 'Request blocked by Shrike',
         scanResult.threat_type,
@@ -384,10 +395,11 @@ export class ShrikeChatSession {
     }
 
     // 3. Proxy to Gemini
-    return this._chat.sendMessageStream(content);
+    return this._chat.sendMessageStream({ message: content });
   }
 
   get history(): unknown[] {
-    return this._chat.history || [];
+    // v2 SDK exposes history via getHistory(); fall back to [] if absent.
+    return typeof this._chat.getHistory === 'function' ? this._chat.getHistory() : [];
   }
 }

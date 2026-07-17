@@ -15,7 +15,7 @@ import {
 } from '../config';
 import { ShrikeBlockedError, ShrikeScanError } from '../errors';
 import { sanitizeScanResponse } from '../sanitizer';
-import { getScanHeaders, maybeAddSignupHint, ScanResult } from '../scanner';
+import { getScanHeaders, isBlocked, maybeAddSignupHint, ScanResult, failOpenResult } from '../scanner';
 
 /**
  * Simple logger for warnings.
@@ -171,7 +171,7 @@ export class ShrikeAnthropic {
     const timeoutId = setTimeout(() => controller.abort(), this._scanTimeout);
 
     try {
-      const response = await fetch(`${this._shrikeEndpoint}/scan`, {
+      const response = await fetch(`${this._shrikeEndpoint}/api/scan/enforce`, {
         method: 'POST',
         headers: getScanHeaders(this._shrikeApiKey),
         body: JSON.stringify({
@@ -187,7 +187,7 @@ export class ShrikeAnthropic {
 
       if (!response.ok) {
         if (this._failMode === FailMode.OPEN) {
-          return { safe: true, reason: `Scan API error: ${response.status}` };
+          return failOpenResult(`Scan API error: ${response.status}`);
         }
         throw new ShrikeScanError(`Scan API returned error: ${response.status}`);
       }
@@ -204,13 +204,13 @@ export class ShrikeAnthropic {
         if (this._failMode === FailMode.OPEN) {
           // No local fallback - just fail open
           logWarning('Scan request timed out, failing open (allowing request)');
-          return { safe: true, reason: 'Scan timeout, failing open' };
+          return failOpenResult('Scan timeout, failing open');
         }
         throw new ShrikeScanError("Scan request timed out and fail_mode is 'closed'");
       }
 
       if (this._failMode === FailMode.OPEN) {
-        return { safe: true, reason: `Scan error: ${errorMessage}` };
+        return failOpenResult(`Scan error: ${errorMessage}`);
       }
       throw new ShrikeScanError(`Scan failed: ${errorMessage}`);
     } finally {
@@ -247,7 +247,7 @@ class MessagesNamespace {
     );
 
     // 2. Block if unsafe
-    if (!scanResult.safe) {
+    if (isBlocked(scanResult)) {
       throw new ShrikeBlockedError(
         `Request blocked: ${scanResult.reason || 'Security threat detected'}`,
         scanResult.threat_type,

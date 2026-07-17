@@ -18,32 +18,40 @@ const mockGenerateContentResponse = {
   },
 };
 
-const mockChatSession = {
+const mockChat = {
   sendMessage: jest.fn().mockResolvedValue(mockGenerateContentResponse),
   sendMessageStream: jest.fn().mockResolvedValue({ stream: [] }),
-  history: [],
+  getHistory: jest.fn().mockReturnValue([]),
 };
 
-const mockModel = {
+const mockModels = {
   generateContent: jest.fn().mockResolvedValue(mockGenerateContentResponse),
   generateContentStream: jest.fn().mockResolvedValue({ stream: [] }),
-  startChat: jest.fn().mockReturnValue(mockChatSession),
 };
 
-// Mock Google Generative AI SDK
-jest.mock('@google/generative-ai', () => ({
-  GoogleGenerativeAI: jest.fn().mockImplementation(() => ({
-    getGenerativeModel: jest.fn().mockReturnValue(mockModel),
+const mockChats = {
+  create: jest.fn().mockReturnValue(mockChat),
+};
+
+// Mock @google/genai (v2+): `new GoogleGenAI({apiKey})` exposes `.models` and
+// `.chats`. This must match the real SDK surface that src/gemini/client.ts
+// require()s — a mock of the deprecated `GoogleGenerativeAI` /
+// `getGenerativeModel` shape is exactly what let the previous broken wrapper
+// pass CI. See failOpenDegraded/real-package shape test for the guard.
+jest.mock('@google/genai', () => ({
+  GoogleGenAI: jest.fn().mockImplementation(() => ({
+    models: mockModels,
+    chats: mockChats,
   })),
 }));
 
 describe('ShrikeGemini', () => {
   beforeEach(() => {
     mockFetch.mockClear();
-    mockModel.generateContent.mockClear();
-    mockModel.generateContentStream.mockClear();
-    mockModel.startChat.mockClear();
-    mockChatSession.sendMessage.mockClear();
+    mockModels.generateContent.mockClear();
+    mockModels.generateContentStream.mockClear();
+    mockChats.create.mockClear();
+    mockChat.sendMessage.mockClear();
   });
 
   describe('constructor', () => {
@@ -175,6 +183,7 @@ describe('ShrikeGemini', () => {
       const result = await client._scanContent('Hello!');
       expect(result.safe).toBe(true);
       expect(result.reason).toContain('timeout');
+      expect(result.degraded).toBe(true); // F-2: fail-open must be marked degraded
     });
 
     it('should throw on timeout when fail mode is closed', async () => {
@@ -238,7 +247,10 @@ describe('ShrikeGemini', () => {
       const response = await model.generateContent('Hello!');
 
       expect(response).toBeDefined();
-      expect(mockModel.generateContent).toHaveBeenCalledWith('Hello!');
+      expect(mockModels.generateContent).toHaveBeenCalledWith({
+        model: 'gemini-1.5-flash',
+        contents: 'Hello!',
+      });
     });
 
     it('should block unsafe requests', async () => {
@@ -293,7 +305,14 @@ describe('ShrikeGemini', () => {
         const blocked = error as ShrikeBlockedError;
         expect(blocked.threatType).toBe('pii_exposure');
         expect(blocked.confidence).toBe('high');
-        expect(blocked.violations).toHaveLength(0);
+        // Sanitizer preserves customer-visible violation entries per contract
+        // symmetry (platform/CLAUDE.md); only policy_id/policy_name/
+        // detection-attribution fields are stripped per-violation.
+        expect(blocked.violations).toHaveLength(1);
+        expect(blocked.violations[0]).toEqual({
+          type: 'ssn',
+          value: '***-**-1234',
+        });
       }
     });
   });
@@ -314,7 +333,10 @@ describe('ShrikeGemini', () => {
       const response = await model.generateContentStream('Hello!');
 
       expect(response).toBeDefined();
-      expect(mockModel.generateContentStream).toHaveBeenCalledWith('Hello!');
+      expect(mockModels.generateContentStream).toHaveBeenCalledWith({
+        model: 'gemini-1.5-flash',
+        contents: 'Hello!',
+      });
     });
 
     it('should block unsafe streaming requests', async () => {
@@ -372,7 +394,7 @@ describe('ShrikeGemini', () => {
       await chat.sendMessage('Hello!');
 
       expect(mockFetch).toHaveBeenCalled();
-      expect(mockChatSession.sendMessage).toHaveBeenCalledWith('Hello!');
+      expect(mockChat.sendMessage).toHaveBeenCalledWith({ message: 'Hello!' });
     });
 
     it('should block unsafe chat messages', async () => {

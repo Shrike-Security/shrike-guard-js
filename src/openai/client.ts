@@ -22,7 +22,7 @@ import {
 } from '../config';
 import { ShrikeBlockedError, ShrikeScanError } from '../errors';
 import { sanitizeScanResponse } from '../sanitizer';
-import { getScanHeaders, maybeAddSignupHint, ScanResult } from '../scanner';
+import { getScanHeaders, isBlocked, maybeAddSignupHint, ScanResult, failOpenResult } from '../scanner';
 
 /**
  * Simple logger for warnings.
@@ -179,7 +179,7 @@ export class ShrikeOpenAI {
     const timeoutId = setTimeout(() => controller.abort(), this._scanTimeout);
 
     try {
-      const response = await fetch(`${this._shrikeEndpoint}/scan`, {
+      const response = await fetch(`${this._shrikeEndpoint}/api/scan/enforce`, {
         method: 'POST',
         headers: getScanHeaders(this._shrikeApiKey),
         body: JSON.stringify({
@@ -195,7 +195,7 @@ export class ShrikeOpenAI {
 
       if (!response.ok) {
         if (this._failMode === FailMode.OPEN) {
-          return { safe: true, reason: `Scan API error: ${response.status}` };
+          return failOpenResult(`Scan API error: ${response.status}`);
         }
         throw new ShrikeScanError(`Scan API returned error: ${response.status}`);
       }
@@ -212,13 +212,13 @@ export class ShrikeOpenAI {
         if (this._failMode === FailMode.OPEN) {
           // No local fallback - just fail open
           logWarning('Scan request timed out, failing open (allowing request)');
-          return { safe: true, reason: 'Scan timeout, failing open' };
+          return failOpenResult('Scan timeout, failing open');
         }
         throw new ShrikeScanError("Scan request timed out and fail_mode is 'closed'");
       }
 
       if (this._failMode === FailMode.OPEN) {
-        return { safe: true, reason: `Scan error: ${errorMessage}` };
+        return failOpenResult(`Scan error: ${errorMessage}`);
       }
       throw new ShrikeScanError(`Scan failed: ${errorMessage}`);
     } finally {
@@ -243,7 +243,7 @@ export class ShrikeOpenAI {
     const timeoutId = setTimeout(() => controller.abort(), this._scanTimeout);
 
     try {
-      const response = await fetch(`${this._shrikeEndpoint}/api/scan/specialized`, {
+      const response = await fetch(`${this._shrikeEndpoint}/api/scan/enforce/specialized`, {
         method: 'POST',
         headers: getScanHeaders(this._shrikeApiKey),
         body: JSON.stringify({
@@ -262,7 +262,7 @@ export class ShrikeOpenAI {
 
       if (!response.ok) {
         if (this._failMode === FailMode.OPEN) {
-          return { safe: true, reason: `Scan API error: ${response.status}` };
+          return failOpenResult(`Scan API error: ${response.status}`);
         }
         throw new ShrikeScanError(`SQL scan API returned error: ${response.status}`);
       }
@@ -274,7 +274,7 @@ export class ShrikeOpenAI {
       }
 
       if (this._failMode === FailMode.OPEN) {
-        return { safe: true, reason: `Scan error: ${error}` };
+        return failOpenResult(`Scan error: ${error}`);
       }
       throw new ShrikeScanError(`SQL scan failed: ${error}`);
     } finally {
@@ -314,7 +314,7 @@ export class ShrikeOpenAI {
     const timeoutId = setTimeout(() => controller.abort(), this._scanTimeout);
 
     try {
-      const response = await fetch(`${this._shrikeEndpoint}/api/scan/specialized`, {
+      const response = await fetch(`${this._shrikeEndpoint}/api/scan/enforce/specialized`, {
         method: 'POST',
         headers: getScanHeaders(this._shrikeApiKey),
         body: JSON.stringify(payload),
@@ -323,7 +323,7 @@ export class ShrikeOpenAI {
 
       if (!response.ok) {
         if (this._failMode === FailMode.OPEN) {
-          return { safe: true, reason: `Scan API error: ${response.status}` };
+          return failOpenResult(`Scan API error: ${response.status}`);
         }
         throw new ShrikeScanError(`File scan API returned error: ${response.status}`);
       }
@@ -335,7 +335,7 @@ export class ShrikeOpenAI {
       }
 
       if (this._failMode === FailMode.OPEN) {
-        return { safe: true, reason: `Scan error: ${error}` };
+        return failOpenResult(`Scan error: ${error}`);
       }
       throw new ShrikeScanError(`File scan failed: ${error}`);
     } finally {
@@ -392,7 +392,7 @@ class CompletionsNamespace {
     );
 
     // 2. Block if unsafe
-    if (!scanResult.safe) {
+    if (isBlocked(scanResult)) {
       throw new ShrikeBlockedError(
         `Request blocked: ${scanResult.reason || 'Security threat detected'}`,
         scanResult.threat_type,

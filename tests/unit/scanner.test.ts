@@ -71,7 +71,7 @@ describe('ScanClient', () => {
 
       expect(result).toEqual(mockResponse);
       expect(mockFetch).toHaveBeenCalledWith(
-        `${DEFAULT_ENDPOINT}/scan`,
+        `${DEFAULT_ENDPOINT}/api/scan/enforce`,
         expect.objectContaining({
           method: 'POST',
         })
@@ -124,7 +124,7 @@ describe('ScanClient', () => {
 
       expect(result).toEqual({ safe: true, reason: '' });
       expect(mockFetch).toHaveBeenCalledWith(
-        `${DEFAULT_ENDPOINT}/api/scan/specialized`,
+        `${DEFAULT_ENDPOINT}/api/scan/enforce/specialized`,
         expect.objectContaining({
           method: 'POST',
           body: expect.stringContaining('"content_type":"sql"'),

@@ -173,6 +173,7 @@ describe('ShrikeAnthropic', () => {
       const result = await client._scanMessages(messages);
       expect(result.safe).toBe(true);
       expect(result.reason).toContain('timeout');
+      expect(result.degraded).toBe(true); // F-2: fail-open must be marked degraded
     });
 
     it('should throw on timeout when fail mode is closed', async () => {
@@ -316,7 +317,14 @@ describe('ShrikeAnthropic', () => {
         const blocked = error as ShrikeBlockedError;
         expect(blocked.threatType).toBe('pii_exposure');
         expect(blocked.confidence).toBe('high');
-        expect(blocked.violations).toHaveLength(0);
+        // Sanitizer preserves customer-visible violation entries per contract
+        // symmetry (platform/CLAUDE.md); only policy_id/policy_name/
+        // detection-attribution fields are stripped per-violation.
+        expect(blocked.violations).toHaveLength(1);
+        expect(blocked.violations[0]).toEqual({
+          type: 'ssn',
+          value: '***-**-1234',
+        });
       }
     });
   });

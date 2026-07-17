@@ -25,8 +25,9 @@ export class ShrikeError extends Error {
  * - A network error occurs
  * - The API returns an unexpected error
  *
- * When fail_mode is 'open' (default), these errors are silently
- * handled and the request is allowed to proceed.
+ * The default fail_mode is 'closed' (secure by default), so a scan
+ * failure raises this exception. Set fail_mode='open' to instead
+ * silently handle these errors and allow the request to proceed.
  */
 export class ShrikeScanError extends ShrikeError {
   constructor(message: string, details: Record<string, unknown> = {}) {

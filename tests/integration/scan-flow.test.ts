@@ -37,7 +37,7 @@ describe('Scan Flow Integration', () => {
       const requests = server.getRequests();
       expect(requests).toHaveLength(1);
       expect(requests[0].method).toBe('POST');
-      expect(requests[0].path).toBe('/scan');
+      expect(requests[0].path).toBe('/api/scan/enforce');
     });
 
     it('should detect prompt injection', async () => {

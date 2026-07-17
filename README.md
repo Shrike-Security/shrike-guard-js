@@ -4,7 +4,7 @@
 [![Node.js 18+](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-**Shrike Guard** is a TypeScript SDK for the [Shrike](https://shrikesecurity.com) platform — AI governance for every AI interaction. It wraps OpenAI, Anthropic (Claude), and Google Gemini clients to automatically evaluate all prompts against policy before they reach the LLM. Whether you're governing a customer-facing chatbot, securing developer AI tools, or managing autonomous agent actions — the same multi-layered cognitive pipeline evaluates every interaction.
+**Shrike Guard** is a TypeScript SDK for the [Shrike](https://shrikesecurity.com) platform — AI governance for every AI interaction. It wraps OpenAI, Anthropic (Claude), and Google Gemini clients to automatically evaluate all prompts against policy before they reach the LLM. Whether you're governing a customer-facing chatbot, securing developer AI tools, or managing autonomous agent actions — the same 9-layer cognitive pipeline evaluates every interaction.
 
 ## Features
 
@@ -15,14 +15,14 @@
   - Jailbreak attempts
   - SQL injection
   - Path traversal
-- **Fail-safe modes**: Choose between fail-open (default) or fail-closed behavior
+- **Fail-safe modes**: Defaults to fail-closed (Zero Trust posture); opt into fail-open explicitly when availability outranks enforcement
 - **CJS + ESM**: Dual build via tsup, works everywhere
 - **Subpath imports**: `shrike-guard/openai`, `shrike-guard/anthropic`, `shrike-guard/gemini`
 - **Zero code changes**: Just replace your import
 
 ## What Shrike Detects
 
-Shrike's backend runs a multi-stage detection pipeline with security rules across **7 compliance frameworks**:
+Shrike's 9-layer cognitive pipeline includes sensitive-data detection aligned to 5 major regulatory frameworks:
 
 | Framework | Coverage |
 |-----------|----------|
@@ -31,10 +31,8 @@ Shrike's backend runs a multi-stage detection pipeline with security rules acros
 | **ISO 27001** | Information security — passwords, tokens, certificates |
 | **SOC 2** | Secrets, credentials, API keys, cloud tokens |
 | **NIST** | AI risk management (IR 8596), cybersecurity framework (CSF 2.0) |
-| **PCI-DSS** | Cardholder data — PAN, CVV, expiry, track data |
-| **WebMCP** | MCP tool description injection, data exfiltration |
 
-Plus built-in detection for prompt injection, jailbreaks, social engineering, and dangerous requests.
+Detection coverage is not a certification claim — see [shrikesecurity.com/compliance](https://shrikesecurity.com/compliance) for our current certification status. Plus built-in detection for prompt injection, jailbreaks, social engineering, and dangerous requests.
 
 ### Tiers
 
@@ -42,12 +40,12 @@ Detection depth depends on your tier. All tiers get the same SDK wrappers — ti
 
 | | Anonymous | Community | Pro | Enterprise |
 |---|---|---|---|---|
-| Detection Layers | L1-L5 | L1-L7 | L1-L8 | L1-L9 |
+| Detection Layers | L1-L5 | L1-L5 | L1-L9 (full) | L1-L9 (full) |
 | API Key | Not needed | Free signup | Paid | Paid |
 | Rate Limit | — | 10/min | 100/min | 1,000/min |
 | Scans/month | — | 1,000 | 25,000 | 1,000,000 |
 
-**Anonymous** (no API key): Pattern-based detection (L1-L5). **Community** (free): Adds LLM-powered semantic analysis. Register at [shrikesecurity.com/signup](https://shrikesecurity.com/signup) — instant, no credit card.
+**Anonymous** (no API key): Pattern-based detection (L1-L5). **Community** (free): Same L1-L5 detection with a dashboard and higher limits; LLM-powered semantic analysis (L6-L9) is Pro+. Register at [shrikesecurity.com/signup](https://shrikesecurity.com/signup) — instant, no credit card.
 
 ## Installation
 
@@ -65,7 +63,7 @@ npm install openai
 npm install @anthropic-ai/sdk
 
 # Google Gemini
-npm install @google/generative-ai
+npm install @google/genai
 ```
 
 ## Quick Start
@@ -128,20 +126,22 @@ Choose how the SDK behaves when the security scan fails (timeout, network error,
 ```typescript
 import { ShrikeOpenAI } from 'shrike-guard/openai';
 
-// Fail-open (default): Allow requests if scan fails
-// Best for: Most applications where availability is important
+// Fail-closed (default): Block requests if scan fails
+// Best for: Production security workloads. If the Shrike backend is down,
+// the SDK raises ShrikeScanError instead of allowing traffic through unguarded.
 const client = new ShrikeOpenAI({
   apiKey: 'sk-...',
   shrikeApiKey: 'shrike-...',
-  failMode: 'open',
+  failMode: 'closed', // This is the default
 });
 
-// Fail-closed: Block requests if scan fails
-// Best for: Security-critical applications
-const strictClient = new ShrikeOpenAI({
+// Fail-open: Allow requests if scan fails
+// Best for: Non-production experiments, internal tools where availability must
+// outrank enforcement. Trades the guard's enforcement promise for uptime.
+const permissiveClient = new ShrikeOpenAI({
   apiKey: 'sk-...',
   shrikeApiKey: 'shrike-...',
-  failMode: 'closed',
+  failMode: 'open',
 });
 ```
 
@@ -248,7 +248,7 @@ if (result.safe) {
 - **LLM SDKs**:
   - OpenAI SDK `>=4.0.0`
   - Anthropic SDK `>=0.18.0`
-  - Google Generative AI `>=0.3.0`
+  - Google Gen AI SDK (`@google/genai`) `>=1.0.0`
 
 ## Environment Variables
 
@@ -302,9 +302,9 @@ Looking for an AI security SDK? Here's how Shrike Guard compares:
 | Feature | Shrike Guard | Lakera | Prompt Armor |
 |---|---|---|---|
 | Drop-in OpenAI/Anthropic/Gemini wrapper | Yes | No | No |
-| Multi-layered evaluation pipeline | Yes | Limited | Limited |
+| 9-layer cognitive pipeline | Yes | Limited | Limited |
 | PII detection + redaction | Yes | Partial | No |
-| Session correlation | Yes (Enterprise) | No | No |
+| Session correlation | Yes (Pro+) | No | No |
 | Free tier (no API key) | Yes | No | No |
 | Open source client | Yes (Apache 2.0) | No | No |
 

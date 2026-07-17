@@ -134,8 +134,8 @@ export class MockServer {
  * Create common mock handlers for Shrike API.
  */
 export function createShrikeMockHandlers(server: MockServer): void {
-  // Scan endpoint - safe by default
-  server.on('POST /scan', (_req, body) => {
+  // Scan endpoint - safe by default (/api/scan/enforce)
+  server.on('POST /api/scan/enforce', (_req, body) => {
     const { prompt } = JSON.parse(body);
 
     // Simple mock logic for testing
@@ -208,8 +208,8 @@ export function createShrikeMockHandlers(server: MockServer): void {
     },
   }));
 
-  // Specialized scan endpoints
-  server.on('POST /api/scan/specialized', (_req, body) => {
+  // Specialized scan endpoints (/api/scan/enforce/specialized)
+  server.on('POST /api/scan/enforce/specialized', (_req, body) => {
     const { content, content_type } = JSON.parse(body);
 
     if (content_type === 'sql') {

@@ -5,7 +5,7 @@
  * do not expose internal detection methodology, layer details, or patterns.
  */
 
-import type { ScanResult } from './scanner';
+import type { ScanResult, ScanViolation } from './scanner';
 
 /**
  * Standard threat types exposed to SDK users (matches MCP ThreatType enum).
@@ -33,9 +33,11 @@ const THREAT_TYPE_MAP: Record<string, string> = {
   completion_baiting: 'jailbreak',
   override: 'jailbreak',
   manipulate: 'jailbreak',
-  tonality_drift_profanity: 'jailbreak',
+  // L8 tonality drift — backend normalizes profanity + hostile as toxic_content;
+  // casual stays as jailbreak (matches platform/common/models/response.go:309-313).
+  tonality_drift_profanity: 'toxic_content',
+  tonality_drift_hostile: 'toxic_content',
   tonality_drift_casual: 'jailbreak',
-  tonality_drift_hostile: 'jailbreak',
   // System prompt leak
   system_prompt_leak: 'system_prompt_leak',
   system_prompt_extraction: 'system_prompt_leak',
@@ -91,9 +93,11 @@ const THREAT_TYPE_MAP: Record<string, string> = {
   suspicious_tld: 'blocked_domain',
   suspicious_domain: 'blocked_domain',
   malicious_url: 'blocked_domain',
-  // Toxicity
-  toxicity: 'toxicity',
-  harmful_content: 'toxicity',
+  // Toxic content (canonical name as of the L7 rewrite). `toxicity` kept as a
+  // legacy alias so older backend builds + customer code don't break.
+  toxic_content: 'toxic_content',
+  toxicity: 'toxic_content',
+  harmful_content: 'toxic_content',
   // Malicious code
   malicious_content: 'malicious_code',
   malicious_code: 'malicious_code',
@@ -114,6 +118,12 @@ const THREAT_TYPE_MAP: Record<string, string> = {
   privilege_escalation: 'privilege_escalation',
   // Destructive operation
   destructive_operation: 'destructive_operation',
+  // L9 multi-turn correlation — the pseudo-category emitted when any
+  // multi_turn_* pattern fires (crescendo, blocked_retry, trust-building,
+  // memory_poisoning, etc.). The normalizeThreatType prefix check below
+  // handles the specific pattern names; this entry catches the pseudo
+  // value if the backend pre-normalizes.
+  multi_turn_attack: 'multi_turn_attack',
   // Errors
   scan_error: 'scan_error',
   size_limit_exceeded: 'size_limit_exceeded',
@@ -140,8 +150,12 @@ const THREAT_GUIDANCE: Record<string, string> = {
     'This content contains patterns matching API keys, tokens, or credentials.',
   pii_exposure: 'This content contains personally identifiable information.',
   blocked_domain: 'This web search targets a restricted domain.',
+  toxic_content:
+    'This content contains potentially harmful or inappropriate language.',
   toxicity:
     'This content contains potentially harmful or inappropriate language.',
+  multi_turn_attack:
+    'A pattern was detected across multiple turns of this session that suggests a coordinated attempt to bypass safety controls.',
   malicious_code:
     'This content contains patterns associated with malicious code.',
   harmful_intent:
@@ -172,7 +186,9 @@ const THREAT_SEVERITY: Record<string, string> = {
   secrets_exposure: 'critical',
   pii_exposure: 'high',
   blocked_domain: 'medium',
+  toxic_content: 'medium',
   toxicity: 'medium',
+  multi_turn_attack: 'high',
   malicious_code: 'critical',
   harmful_intent: 'high',
   social_engineering: 'medium',
@@ -208,7 +224,19 @@ export function normalizeThreatType(rawType?: string): string {
     return 'unknown';
   }
   const normalized = rawType.toLowerCase().replace(/-/g, '_');
-  return THREAT_TYPE_MAP[normalized] || 'unknown';
+  if (THREAT_TYPE_MAP[normalized]) {
+    return THREAT_TYPE_MAP[normalized];
+  }
+  // L9 multi-turn correlation patterns flow as `multi_turn_<pattern>`
+  // (crescendo, blocked_retry, topic_pivot, threat_diversity, safe_then_unsafe,
+  //  tool_sequence_anomaly, coded_language_setup, context_overflow,
+  //  memory_poisoning, velocity_burst). Backend collapses these to
+  // multi_turn_attack — mirror the prefix logic from
+  // platform/common/models/response.go:380.
+  if (normalized.startsWith('multi_turn_')) {
+    return 'multi_turn_attack';
+  }
+  return 'unknown';
 }
 
 /**
@@ -247,30 +275,102 @@ export function bucketConfidence(score?: number): string {
 }
 
 /**
+ * Governance-outcome fields the sanitizer preserves verbatim on BOTH safe
+ * and unsafe branches. These are OUTCOME state (customer sees outcomes;
+ * timings/attribution stay provider-only) — the contract-symmetry surface
+ * (safe/refuse_tier/recovery/session_state on every response).
+ */
+const PRESERVED_GOVERNANCE_FIELDS = [
+  'action',
+  'refuse_tier',
+  'recovery',
+  'session_state',
+  'content_type',
+  'approval_info',
+  'client_session_rotation',
+] as const;
+
+/**
+ * Sanitize one entry from the backend violations[] array.
+ * Preserves customer-visible outcome fields (severity, action, threat_type,
+ * owasp_category, user_message, suggested_action); drops attribution
+ * fields (policy_id, policy_name, matched_pattern, ai_reasoning, etc.).
+ */
+export function sanitizeViolation(raw: unknown): ScanViolation | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+  const source = raw as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(source)) {
+    if (!INTERNAL_FIELDS.has(k)) {
+      out[k] = v;
+    }
+  }
+  return out as ScanViolation;
+}
+
+/**
  * Sanitize a raw backend scan response for IP protection.
  *
- * Strips internal detection details, normalizes threat types,
- * and buckets confidence scores.
+ * Strips internal detection attribution (layer timings, per-detector
+ * confidences, pattern names, policy IDs) — NOT outcome state.
+ * Preserves the four-state governance surface (`action`, `refuse_tier`,
+ * `recovery`, `session_state`) so callers can distinguish
+ * allow/warn/require_approval/block. Contract symmetry — safe and refuse
+ * verdicts carry the same governance fields.
  */
 export function sanitizeScanResponse(raw: ScanResult): ScanResult {
   const safe = raw.safe !== false;
+  const result: ScanResult = { safe };
 
-  // Pass through approval_info if present (not an IP concern)
-  const approvalInfo = raw.approval_info;
+  // Governance-outcome fields pass through on BOTH branches. This is the
+  // symmetric contract — a `warn` verdict (safe=true, action="warn") must
+  // carry recovery/refuse_tier the same as a `block` (safe=false).
+  for (const field of PRESERVED_GOVERNANCE_FIELDS) {
+    const value = (raw as Record<string, unknown>)[field];
+    if (value !== undefined && value !== null) {
+      (result as Record<string, unknown>)[field] = value;
+    }
+  }
+
+  // violations[] is a mixed shape — pass each entry through per-item
+  // sanitization to drop policy_id / policy_name / matched_pattern while
+  // keeping customer-visible severity, threat_type, owasp_category,
+  // user_message, suggested_action. Empty array is dropped (noise).
+  const rawViolations = raw.violations;
+  if (Array.isArray(rawViolations) && rawViolations.length > 0) {
+    const cleaned = rawViolations
+      .map((v) => sanitizeViolation(v))
+      .filter((v): v is ScanViolation => v !== null);
+    if (cleaned.length > 0) {
+      result.violations = cleaned;
+    }
+  }
 
   if (safe) {
-    const result: ScanResult = {
-      safe: true,
-      reason: raw.reason || '',
-    };
-    if (approvalInfo) {
-      result.approval_info = approvalInfo;
-    }
+    // Safe branch: reason may carry advisory copy for warn tier.
+    result.reason = raw.reason || '';
     return result;
   }
 
-  // Unsafe: normalize and sanitize
-  const threatType = normalizeThreatType(raw.threat_type);
+  // Unsafe branch: derive threat classification for legacy callers that
+  // read top-level threat_type/severity/guidance. Backend /api/scan/enforce
+  // returns top-level threat_type=null and puts detail inside violations[];
+  // for those responses, prefer the first violation's threat_type when
+  // the raw top-level field is missing.
+  let rawThreatType = raw.threat_type;
+  if (!rawThreatType && Array.isArray(rawViolations) && rawViolations.length > 0) {
+    const first = rawViolations[0];
+    if (first && typeof first === 'object' && !Array.isArray(first)) {
+      const firstThreat = (first as Record<string, unknown>).threat_type;
+      if (typeof firstThreat === 'string') {
+        rawThreatType = firstThreat;
+      }
+    }
+  }
+
+  const threatType = normalizeThreatType(rawThreatType);
   const confidence = bucketConfidence(
     typeof raw.confidence === 'number' ? raw.confidence : undefined
   );
@@ -281,17 +381,11 @@ export function sanitizeScanResponse(raw: ScanResult): ScanResult {
   const guidance =
     THREAT_GUIDANCE[threatType] || THREAT_GUIDANCE['unknown'];
 
-  const result: ScanResult = {
-    safe: false,
-    threat_type: threatType,
-    severity: severity,
-    confidence: confidence,
-    reason: raw.reason || guidance,
-    guidance: guidance,
-  };
-  if (approvalInfo) {
-    result.approval_info = approvalInfo;
-  }
+  result.threat_type = threatType;
+  result.severity = severity;
+  result.confidence = confidence;
+  result.reason = raw.reason || guidance;
+  result.guidance = guidance;
   return result;
 }
 
