@@ -167,6 +167,47 @@ const client = new ShrikeOpenAI({
 });
 ```
 
+### Local and self-hosted LLMs
+
+Shrike governs the model you point it at — it does not have to be a hosted
+frontier API. Local runtimes like [Ollama](https://ollama.com),
+[vLLM](https://docs.vllm.ai), and LM Studio expose an OpenAI-compatible
+endpoint, so `ShrikeOpenAI` guards them by forwarding a `baseURL` through
+`openaiOptions`:
+
+```typescript
+import { ShrikeOpenAI } from 'shrike-guard/openai';
+
+// Ollama serving llama3 locally, governed by Shrike before every call
+const client = new ShrikeOpenAI({
+  apiKey: 'ollama', // local servers ignore the value
+  shrikeApiKey: 'shrike-...', // governance still runs server-side
+  openaiOptions: { baseURL: 'http://localhost:11434/v1' },
+});
+
+const response = await client.chat.completions.create({
+  model: 'llama3',
+  messages: [{ role: 'user', content: 'Summarize this ticket…' }],
+});
+```
+
+The same pattern works for Anthropic-compatible gateways via
+`anthropicOptions.baseURL`. For Gemini, use the `baseUrl` option (added in
+4.0.5), applied as `httpOptions.baseUrl` on the `@google/genai` client:
+
+```typescript
+import { ShrikeGemini } from 'shrike-guard/gemini';
+
+const client = new ShrikeGemini({
+  apiKey: '…',
+  shrikeApiKey: 'shrike-...',
+  baseUrl: 'https://your-gemini-gateway.example',
+});
+```
+
+The prompt still leaves your process to reach the Shrike backend for scanning;
+the *model call* stays on your local/self-hosted endpoint.
+
 ## SQL and File Scanning
 
 The OpenAI client also provides standalone scanning for SQL queries and file paths:

@@ -77,6 +77,20 @@ export interface ShrikeGeminiOptions {
   failMode?: FailMode | 'open' | 'closed';
   /** Timeout for scan requests in milliseconds. */
   scanTimeout?: number;
+  /**
+   * Custom endpoint for the Gemini API. Point this at a Gemini-compatible
+   * gateway or proxy to route model calls elsewhere. Applied as
+   * `httpOptions.baseUrl` on the underlying `@google/genai` client. (For a
+   * local OpenAI-compatible server such as Ollama or vLLM, use ShrikeOpenAI
+   * with `openaiOptions.baseURL` instead — that is the common local-LLM path.)
+   */
+  baseUrl?: string;
+  /**
+   * Additional options passed through to the `@google/genai` `GoogleGenAI`
+   * constructor (e.g. `httpOptions`, `apiVersion`). Merged after `apiKey` and
+   * `baseUrl`, so an explicit `httpOptions` here takes precedence over `baseUrl`.
+   */
+  geminiOptions?: Record<string, unknown>;
 }
 
 /**
@@ -116,7 +130,7 @@ export class ShrikeGemini {
         : options.failMode || DEFAULT_FAIL_MODE;
     this._scanTimeout = options.scanTimeout || DEFAULT_SCAN_TIMEOUT;
 
-    // Note: All scanning is done via backend API (tier-based: community=L1-L4, pro=L1-L8)
+    // Note: Scan depth is set by the backend from the license tier (community = L1-L5 deterministic layers; Pro and above = full L1-L9 including LLM semantic, response intel and session correlation).
     // No local scanning - backend has full regex patterns (~50+) and normalizers
 
     if (!this._shrikeApiKey) {
@@ -130,7 +144,14 @@ export class ShrikeGemini {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { GoogleGenAI } = require('@google/genai');
-      this._genAI = new GoogleGenAI({ apiKey: this._apiKey }) as GoogleGenAIClient;
+      // baseUrl is applied via httpOptions unless the caller supplied their own
+      // httpOptions in geminiOptions (that takes precedence).
+      const genAIOptions: Record<string, unknown> = { apiKey: this._apiKey };
+      if (options.baseUrl) {
+        genAIOptions.httpOptions = { baseUrl: options.baseUrl.replace(/\/$/, '') };
+      }
+      Object.assign(genAIOptions, options.geminiOptions);
+      this._genAI = new GoogleGenAI(genAIOptions) as GoogleGenAIClient;
     } catch (err) {
       throw new Error(
         `@google/genai is not installed or failed to initialize. Install it with: npm install @google/genai${
@@ -190,8 +211,8 @@ export class ShrikeGemini {
    * Scan content before sending to Gemini via backend API.
    *
    * Always calls backend - backend handles tier-based scanning:
-   * - Community tier (no API key): L1-L4 (regex, unicode, encoding, token normalization)
-   * - Pro tier: L1-L8 (full scan including LLM)
+   * - Community tier (no API key): L1-L5 (regex, unicode, malformed, encoding, token/semantic)
+   * - Pro tier and above: L1-L9 (adds visual, LLM semantic, response intel, session correlation)
    */
   async _scanContent(contents: GeminiContent): Promise<ScanResult> {
     const textContent = this._extractContent(contents);

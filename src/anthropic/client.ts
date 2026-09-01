@@ -109,7 +109,7 @@ export class ShrikeAnthropic {
         : options.failMode || DEFAULT_FAIL_MODE;
     this._scanTimeout = options.scanTimeout || DEFAULT_SCAN_TIMEOUT;
 
-    // Note: All scanning is done via backend API (tier-based: community=L1-L4, pro=L1-L8)
+    // Note: Scan depth is set by the backend from the license tier (community = L1-L5 deterministic layers; Pro and above = full L1-L9 including LLM semantic, response intel and session correlation).
     // No local scanning - backend has full regex patterns (~50+) and normalizers
 
     if (!this._shrikeApiKey) {
@@ -148,8 +148,8 @@ export class ShrikeAnthropic {
    * Scan user messages for security threats via backend API.
    *
    * Always calls backend - backend handles tier-based scanning:
-   * - Community tier (no API key): L1-L4 (regex, unicode, encoding, token normalization)
-   * - Pro tier: L1-L8 (full scan including LLM)
+   * - Community tier (no API key): L1-L5 (regex, unicode, malformed, encoding, token/semantic)
+   * - Pro tier and above: L1-L9 (adds visual, LLM semantic, response intel, session correlation)
    */
   async _scanMessages(messages: AnthropicMessage[]): Promise<ScanResult> {
     const userContent = this._extractUserContent(messages);

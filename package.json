@@ -1,6 +1,6 @@
 {
   "name": "shrike-guard",
-  "version": "4.0.3",
+  "version": "4.0.5",
   "description": "Shrike SDK for AI agent action governance — drop-in wrapper for OpenAI, Anthropic, and Gemini that governs every tool call, prompt, and response server-side. Allow / approve / block. Free tier available.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

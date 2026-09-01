@@ -72,6 +72,33 @@ describe('ShrikeGemini', () => {
       expect(client).toBeDefined();
     });
 
+    it('should forward baseUrl to GoogleGenAI as httpOptions.baseUrl (trailing slash trimmed)', () => {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { GoogleGenAI } = require('@google/genai');
+      (GoogleGenAI as jest.Mock).mockClear();
+      new ShrikeGemini({
+        apiKey: 'AIza-test',
+        shrikeApiKey: 'shrike-test',
+        baseUrl: 'https://gemini-gateway.internal/',
+      });
+      const arg = (GoogleGenAI as jest.Mock).mock.calls[0][0];
+      expect(arg.httpOptions).toEqual({ baseUrl: 'https://gemini-gateway.internal' });
+    });
+
+    it('should let explicit geminiOptions.httpOptions win over baseUrl', () => {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { GoogleGenAI } = require('@google/genai');
+      (GoogleGenAI as jest.Mock).mockClear();
+      new ShrikeGemini({
+        apiKey: 'AIza-test',
+        shrikeApiKey: 'shrike-test',
+        baseUrl: 'https://ignored.example',
+        geminiOptions: { httpOptions: { baseUrl: 'https://explicit.example' } },
+      });
+      const arg = (GoogleGenAI as jest.Mock).mock.calls[0][0];
+      expect(arg.httpOptions).toEqual({ baseUrl: 'https://explicit.example' });
+    });
+
     it('should accept fail mode as string or enum', () => {
       const client1 = new ShrikeGemini({
         apiKey: 'AIza-test',

@@ -1,5 +1,24 @@
 # Changelog
 
+## [4.0.5] - 2026-08-31
+
+### Added
+- **Custom endpoint for the Gemini wrapper (`baseUrl`).** `ShrikeGemini` now
+  accepts `baseUrl` (applied as `httpOptions.baseUrl` on the underlying
+  `@google/genai` client) and a `geminiOptions` passthrough for advanced
+  constructor options — parity with the OpenAI and Anthropic wrappers, which
+  already forwarded a custom endpoint via `openaiOptions.baseURL` /
+  `anthropicOptions.baseURL`. An explicit `geminiOptions.httpOptions` takes
+  precedence over `baseUrl`.
+- **Documented local / self-hosted LLM governance.** New README section shows
+  governing an OpenAI-compatible local runtime (Ollama, vLLM, LM Studio) by
+  forwarding `openaiOptions.baseURL`, plus the Gemini and Anthropic equivalents.
+  The plumbing already worked for OpenAI/Anthropic; this documents it and closes
+  the Gemini gap.
+
+_(Version aligned to 4.0.5 with the Python SDK for this coordinated local-LLM
+parity release; 4.0.4 was not published for the TypeScript SDK.)_
+
 ## [4.0.3] - 2026-07-17
 
 ### Fixed

@@ -34,8 +34,10 @@ export const DEFAULT_ENDPOINT = 'https://api.shrikesecurity.com/agent';
 /** Default rate limit (requests per minute) */
 export const DEFAULT_RATE_LIMIT_PER_MINUTE = 100;
 
-// Note: All scanning is done via backend API (tier-based: community=L1-L4, pro=L1-L8)
-// No local patterns needed - backend handles all detection logic
+// Note: Scan depth is set by the backend from the license tier (community = L1-L5 deterministic layers; Pro and above = full L1-L9 including LLM semantic, response intel and session correlation).
+// Detection logic is backend-side. The one deliberate exception is PII redaction,
+// which runs locally from a bundled pattern set so redaction survives a backend
+// outage; see piiRedactor / piiSync.
 
 /** SDK identification */
 export const SDK_NAME = 'typescript';
