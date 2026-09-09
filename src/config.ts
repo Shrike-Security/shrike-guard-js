@@ -44,20 +44,65 @@ export const SDK_NAME = 'typescript';
 export const SDK_USER_AGENT = 'shrike-guard-typescript';
 
 /**
- * Session identity — persists for the lifetime of this SDK process.
- * Maps to L9's SessionCache key for multi-turn attack detection.
+ * Process-wide session and agent identity. The session id is the backend's
+ * multi-turn correlation key; the agent id is what a declared scope is
+ * enforced against. Both can be overridden per client (`sessionId` /
+ * `agentId` options and `forSession()`).
  */
 const SESSION_ID = randomUUID();
-const AGENT_ID = process.env.SHRIKE_AGENT_ID || `sdk-ts-${randomUUID().slice(0, 8)}`;
+const AGENT_ID = `sdk-ts-${randomUUID().slice(0, 8)}`;
 
 /** Returns the stable session ID for this SDK process. */
 export function getSessionId(): string {
   return SESSION_ID;
 }
 
-/** Returns the agent ID (from SHRIKE_AGENT_ID env or auto-generated). */
+/**
+ * Returns the agent ID: SHRIKE_AGENT_ID when set, so a deployment can name its
+ * agents; otherwise an id generated once per process. The variable is read at
+ * call time rather than at import, matching the Go and Python SDKs, so setting
+ * it after import still takes effect and the shared contract
+ * (`agent_id_env_override` in canonical-request-shapes.json) can be tested
+ * in-process.
+ */
 export function getAgentId(): string {
-  return AGENT_ID;
+  return process.env.SHRIKE_AGENT_ID || AGENT_ID;
+}
+
+let processSessionWarned = false;
+
+/**
+ * Log, once per process, that scans are using the process-wide session id.
+ *
+ * The process-wide default suits a CLI, a worker or a single agent, and gives
+ * those callers multi-turn correlation without configuration.
+ *
+ * It does not suit a server handling many end users: session identity is the
+ * key the backend accumulates risk against, so every user sharing one id shares
+ * one risk score, and one user's refusal counts against the next user's action.
+ * The SDK cannot tell the two deployments apart, so the default is kept and
+ * stated once. Pass `sessionId` to the client, or derive a per-request client
+ * with `forSession()`, and the message is not emitted.
+ *
+ * Silence it with `SHRIKE_SUPPRESS_SESSION_WARNING=1`.
+ */
+export function warnOnceAboutTheProcessSession(): void {
+  if (processSessionWarned) return;
+  processSessionWarned = true;
+
+  if (process.env.SHRIKE_SUPPRESS_SESSION_WARNING) return;
+
+  console.warn(
+    '[shrike-guard] Using the process-wide session id. This suits a single ' +
+      'agent; a server handling many end users should pass sessionId or use ' +
+      'client.forSession(<per-request id>) so each user has its own session. ' +
+      'Set SHRIKE_SUPPRESS_SESSION_WARNING=1 to silence this message.'
+  );
+}
+
+/** Test seam: forget that the warning was emitted. */
+export function resetProcessSessionWarningForTests(): void {
+  processSessionWarned = false;
 }
 
 /**

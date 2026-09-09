@@ -31,8 +31,19 @@ export {
 } from './errors';
 
 // Scanner
-export { ScanClient, getScanHeaders, isBlocked, maybeAddSignupHint } from './scanner';
-export type { ScanResult, ScanClientOptions, CorrelationPattern } from './scanner';
+export {
+  ScanClient,
+  getScanHeaders,
+  isBlocked,
+  maybeAddSignupHint,
+  attributableToOperator,
+} from './scanner';
+export type {
+  ScanResult,
+  ScanClientOptions,
+  CorrelationPattern,
+  ContentOrigin,
+} from './scanner';
 
 // Session rotation (two-shape record — mirrors MCP client contract)
 export { evaluateRotation, ROTATION_THRESHOLD } from './rotation';

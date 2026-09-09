@@ -1,5 +1,72 @@
 # Changelog
 
+## [4.1.0] - 2026-09-09
+
+### Added
+- **Act-plane scanning: every channel the backend scans is now reachable from
+  the SDK.** The backend has scanned eight specialized content types since the
+  act plane shipped; this SDK exposed four. `scanCommand` — the highest-volume
+  surface, the one an agent hits before every shell-out — had no method at all,
+  so the only way to reach it was to hand-roll an HTTP call or route through the
+  MCP server. New on `ScanClient`:
+  - `scanCommand(command, cwd?)` — shell commands, screened before `exec`.
+    Commands are decomposed, so SQL passed to `psql -c`, `mysql -e`, or a
+    heredoc is scanned as SQL rather than as opaque shell text.
+  - `scanWebSearch(query)` — search queries that acquire attack tooling,
+    credentials, or evasion tradecraft.
+  - `scanRagContext(chunks, query?)` — retrieved context, the standard carrier
+    for indirect prompt injection. Accepts a string or a list of strings.
+  - `scanMcpSchema(name, description, inputSchema?)` — a single MCP tool
+    definition, for tool poisoning in a `tools/list` response. Screened once at
+    registration, not per call.
+- **`content_origin` on `ScanResult`.** Every verdict now says where the scanned
+  content came from: `human_prompt`, `agent_output`, `agent_action`, or
+  `third_party`. This answers the question a verdict alone cannot — was that my
+  prompt, or the agent acting on its own — which decides who a refusal message
+  is addressed to. Exported alongside it: the `ContentOrigin` type and
+  `attributableToOperator(origin)`, true only for `human_prompt`. Unknown content
+  types resolve to `agent_action`, never to `human_prompt`.
+- **Act-plane parity test** (`tests/unit/actplane-parity.test.ts`). Iterates the
+  canonical channel list and fails when a channel has no SDK method. The gap
+  above went unnoticed because "the backend supports it" and "a customer can
+  call it" were two facts with nothing comparing them. This is the comparison.
+
+- **Per-request session identity — `sessionId`/`agentId` on `ScanClientOptions`,
+  and `forSession()`.** Session identity is the key the backend accumulates
+  multi-turn risk against, so it has to mean one unit of work: one agent run,
+  one conversation, one user's request. It defaults to a process-wide id, which
+  suits a CLI or a worker but not a server serving many end users, where every
+  user would share one risk score and one user's refusal would count against
+  the next user's action. `forSession()` returns a view that shares the parent's
+  rate limiter, so deriving one per request is cheap and cannot multiply your
+  rate budget:
+
+  ```ts
+  const guard = new ScanClient({ apiKey: KEY });   // once, at startup
+
+  app.post('/act', async (req, res) => {           // per request
+    const scoped = guard.forSession(req.session.id);
+    const verdict = await scoped.scanCommand(req.body.command);
+  });
+  ```
+
+  The process-wide default is unchanged when nothing is supplied, so
+  single-agent callers keep multi-turn correlation; the SDK now warns once when
+  it is in force. Silence that with `SHRIKE_SUPPRESS_SESSION_WARNING=1`.
+
+  `evaluateRotation`'s caller-owned branch now applies: a caller that supplies
+  its own session id receives a rotation recommendation rather than a
+  module-owned rotation.
+
+### Fixed
+- **`content_origin` was computed by the backend and dropped before the caller.**
+  The response sanitizer is an allow-list, and the field was never added to
+  `PRESERVED_GOVERNANCE_FIELDS`, so it was serialized by the server and stripped
+  one layer before the application. It now survives sanitization.
+- **Session identity could not be configured.** Every scan in a process used one
+  generated session id, so a server scanning on behalf of more than one person
+  placed all of them in one session. See `sessionId` / `forSession()` above.
+
 ## [4.0.5] - 2026-08-31
 
 ### Added

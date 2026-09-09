@@ -318,7 +318,7 @@ describe('ShrikeAnthropic', () => {
         expect(blocked.threatType).toBe('pii_exposure');
         expect(blocked.confidence).toBe('high');
         // Sanitizer preserves customer-visible violation entries per contract
-        // symmetry (platform/CLAUDE.md); only policy_id/policy_name/
+        // symmetry; only policy_id/policy_name/
         // detection-attribution fields are stripped per-violation.
         expect(blocked.violations).toHaveLength(1);
         expect(blocked.violations[0]).toEqual({

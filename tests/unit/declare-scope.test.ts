@@ -53,6 +53,29 @@ describe('ScanClient.declareScope', () => {
     expect(result.scope_id).toBe('sc_1');
   });
 
+  it('a refresh body carries only agent_id and max_duration_seconds', async () => {
+    // Everything omitted is inherited server-side. Sending an empty
+    // allowed_tools would read as "no tools"; a missing max_actions used to
+    // read as a cleared budget. The refresh body must carry neither.
+    mockFetch.mockResolvedValueOnce(okResponse({ scope_id: 'sc_1', renewable_until: '2026-09-06T12:00:00Z', ceiling_reached: false }));
+
+    const result = await newClient().declareScope({ agentId: 'recon_agent', maxDurationSeconds: 7200 });
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(body).toEqual({ agent_id: 'recon_agent', max_duration_seconds: 7200 });
+    expect(result.renewable_until).toBe('2026-09-06T12:00:00Z');
+    expect(result.ceiling_reached).toBe(false);
+  });
+
+  it('forwards renewableSeconds on a first declaration', async () => {
+    mockFetch.mockResolvedValueOnce(okResponse({ scope_id: 'sc_1' }));
+
+    await newClient().declareScope({ agentId: 'recon_agent', allowedTools: ['command'], maxDurationSeconds: 7200, renewableSeconds: 86400 });
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(body.renewable_seconds).toBe(86400);
+  });
+
   it('serializes all optional fields when set', async () => {
     mockFetch.mockResolvedValueOnce(okResponse({ scope_id: 'sc_2' }));
 

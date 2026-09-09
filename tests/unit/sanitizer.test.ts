@@ -1,12 +1,11 @@
 /**
  * Tests for sanitizer output shape.
  *
- * Pins the SDK-output contract at the sanitizer boundary. The pre-2026-07-07
+ * Pins the SDK-output contract at the sanitizer boundary. An earlier
  * sanitizer stripped `action`, `refuse_tier`, `recovery`, `session_state`,
- * `content_type`, and `violations[]` from every response — violating the
- * contract-symmetry principle in platform/CLAUDE.md and rendering the
- * the four-state Cooperative Governance wire shape is invisible to
- * direct SDK callers.
+ * `content_type`, and `violations[]` from every response, which violated the
+ * contract-symmetry principle and left the four-state Cooperative Governance
+ * wire shape invisible to direct SDK callers.
  *
  * Contract-symmetry test — mirrors Python test_sanitizer.py.
  * If either SDK diverges, that is a bug in one of the two.

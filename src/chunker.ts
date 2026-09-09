@@ -14,9 +14,8 @@
  *   3. Bidirectional cost win: fewer tokens billed to the customer, fewer
  *      billed to us.
  *
- * Known limit (post-launch fix): each chunk carries the same session ID,
- * so L9 turn count inflates by chunk-count. Documented in
- * the adaptive scan-triage design; fix is a backend `chunk_group` field that
+ * Known limit: each chunk carries the same session ID, so the session turn
+ * count grows by the number of chunks. A backend `chunk_group` field that
  * collapses N chunk-scans into one L9 turn.
  */
 

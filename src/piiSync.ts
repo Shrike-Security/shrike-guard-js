@@ -48,7 +48,7 @@ const DEFAULT_SYNC_TIMEOUT_MS = 5000;
  *
  * Retired PREFIX_MAP in favor of this + backend-shipped prefixes because the
  * hardcoded allowlist silently dropped any new pattern the backend added
- * (see 2026-07-01 U1 IP-redaction miss). Now no threat_type ever disappears
+ * Now no threat_type ever disappears
  * and adding a new backend pattern requires zero SDK changes.
  */
 function fallbackPrefixFor(threatType: string): string {

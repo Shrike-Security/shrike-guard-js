@@ -1,27 +1,35 @@
 /**
  * Cross-language contract-symmetry parity test.
  *
- * Loads the shared fixture at platform/testdata/contract-symmetry/ and
+ * Loads the contract-symmetry fixture vendored under tests/fixtures/ and
  * asserts that the TypeScript SDK's sanitizeScanResponse preserves every
  * governance field declared as invariant. The identical fixture is
  * consumed by the Python SDK and MCP responseFormatter test suites — if
- * any of the three drifts, that language's CI job fails.
+ * any of the three drifts, that language's CI job fails. The vendored copy
+ * is byte-identical to the canonical fixture shared by every consumer; the
+ * last block in this file checks that whenever the canonical copy is
+ * reachable.
  *
- * See platform/testdata/contract-symmetry/README.md for the design rationale
- * and platform/CLAUDE.md § Contract symmetry for the shipped principle.
+ * Pins the contract-symmetry principle: every scan response carries the same
+ * governance fields (safe, refuse_tier, recovery, session_state) whether the
+ * verdict is safe or refused.
  */
 
-import { readFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 import { sanitizeScanResponse } from '../../src/sanitizer';
 import type { ScanResult } from '../../src/scanner';
 
 // ---------------------------------------------------------------------------
-// Fixture loading — reach up from platform/sdks/typescript/tests/unit/ to platform/
+// Fixture loading
 // ---------------------------------------------------------------------------
 
-const FIXTURE_DIR = join(__dirname, '..', '..', '..', '..', 'testdata', 'contract-symmetry');
+// The vendored copy ships with the package so the suite runs from any checkout.
+const FIXTURE_DIR = join(__dirname, '..', 'fixtures', 'contract-symmetry');
+// The canonical copy is shared with the other SDKs and is only reachable from
+// the monorepo; when present, the vendored copy must match it byte for byte.
+const CANONICAL_DIR = join(__dirname, '..', '..', '..', '..', 'testdata', 'contract-symmetry');
 
 function loadFixture<T>(name: string): T {
   return JSON.parse(readFileSync(join(FIXTURE_DIR, name), 'utf-8')) as T;
@@ -164,4 +172,31 @@ describe('contract-symmetry parity (TypeScript SDK)', () => {
       expect(sanitized.action).toBe(rawAction);
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// The vendored fixture must match the canonical copy
+// ---------------------------------------------------------------------------
+
+// The copy under tests/fixtures/ exists so the suite runs from a standalone
+// checkout. It is a copy, not a fork: whenever the canonical fixture is
+// reachable, every vendored file must match it byte for byte.
+const canonicalReachable = existsSync(CANONICAL_DIR);
+
+(canonicalReachable ? describe : describe.skip)('vendored fixture matches the canonical copy', () => {
+  const names = readdirSync(FIXTURE_DIR)
+    .filter((name) => name.endsWith('.json'))
+    .sort();
+
+  it('has at least one vendored file', () => {
+    expect(names.length).toBeGreaterThan(0);
+  });
+
+  for (const name of names) {
+    it(name, () => {
+      expect(readFileSync(join(FIXTURE_DIR, name), 'utf-8')).toBe(
+        readFileSync(join(CANONICAL_DIR, name), 'utf-8')
+      );
+    });
+  }
 });

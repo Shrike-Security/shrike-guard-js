@@ -153,7 +153,9 @@ describe('formatBlockFeedback', () => {
       'accumulated risk from prior turns that cannot be scanned out; ' +
       'a fresh session_id is the self-service recovery path. ' +
       'reset_session is administratively restricted at the block ' +
-      'threshold.';
+      'threshold, except under a live declared scope: an agent may ' +
+      'release its own session up to three times per renewal window, ' +
+      'and every release is audited.';
 
     const verdict = {
       safe: false,
@@ -172,7 +174,7 @@ describe('formatBlockFeedback', () => {
       recovery: {
         instruction: canonicalInstruction,
         available_tools: ['scan_prompt', 'scan_response', 'session_status'],
-        // Q1 session_locked short-circuit does NOT populate
+        // The session_locked short-circuit does NOT populate
         // patterns_triggered — the block fires on accumulated state
         // not a per-turn correlator report.
       },

@@ -12,6 +12,7 @@ import {
   RETRY_CONFIG,
   getSessionId,
   getAgentId,
+  warnOnceAboutTheProcessSession,
 } from './config';
 import type { ApprovalInfo } from './config';
 import { AUTO_CHUNK_THRESHOLD, aggregateChunkResults, chunkContent } from './chunker';
@@ -87,6 +88,28 @@ export interface ScanViolation {
   [key: string]: unknown;
 }
 
+/**
+ * Provenance of scanned content. See {@link ScanResult.content_origin}.
+ */
+export type ContentOrigin =
+  | 'human_prompt'
+  | 'agent_output'
+  | 'agent_action'
+  | 'third_party';
+
+/**
+ * True when the operator is answerable for this content — i.e. a person
+ * typed it. Everything else was produced by the agent or arrived from
+ * outside, and a refusal on it is not something the operator did.
+ *
+ * Use it to decide who a refusal message is addressed to: telling a user
+ * "your request was blocked" when the agent poisoned its own context is
+ * both wrong and unhelpful.
+ */
+export function attributableToOperator(origin?: ContentOrigin): boolean {
+  return origin === 'human_prompt';
+}
+
 export interface ScanResult {
   safe: boolean;
   reason?: string;
@@ -106,6 +129,37 @@ export interface ScanResult {
   session_state?: ScanSessionState;
   /** Specialized scan input type, e.g. 'sql' / 'file_path' / 'a2a_message' */
   content_type?: string;
+  /**
+   * Where the scanned content came from — who is answerable for it.
+   *
+   * - `human_prompt`   the operator typed it
+   * - `agent_output`   the model generated it
+   * - `agent_action`   the agent is about to do it (every act-plane surface)
+   * - `third_party`    it arrived from outside: a tool result, a retrieved
+   *                    document, a peer agent
+   *
+   * This is the field that answers "was that my prompt, or the agent acting
+   * on its own?" — the question you cannot reconstruct after the fact from a
+   * verdict alone. Unknown content types resolve to `agent_action`, never to
+   * `human_prompt`: attributing an unattributable action to the operator is
+   * the one error that is never safe to make.
+   */
+  content_origin?: ContentOrigin;
+  /**
+   * True when the agent's declared scope held this action (expired, tool
+   * outside the scope, or action ceiling reached). The hold never skips the
+   * content scan: a content block wins and stands as the verdict; otherwise
+   * the verdict is require_approval and content_verdict carries what the
+   * content scan said.
+   */
+  held_by_scope?: boolean;
+  /** The content scan's own answer on a held action; absent when the content was blocked */
+  content_verdict?: {
+    safe: boolean;
+    refuse_tier: ScanAction;
+    threat_type?: string;
+    severity?: string;
+  };
   /** Client-side session rotation guidance */
   client_session_rotation?: unknown;
   /** L9 session risk score (0.0-1.0), present when session correlation is active */
@@ -147,6 +201,11 @@ export interface DeclareScopeResult {
   expires_at?: string;
   active_until?: string;
   expired?: boolean;
+  /** Renewal window: until when this key may refresh the scope itself.
+      Absent means no ceiling; ceiling_reached means only an operator can now. */
+  renewable_seconds?: number;
+  renewable_until?: string;
+  ceiling_reached?: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -165,6 +224,22 @@ export interface ScanClientOptions {
   rateLimitPerMinute?: number;
   /** Optional callback to refresh API key on 401. Return new key or null. */
   onKeyRefresh?: () => Promise<string | null>;
+  /**
+   * The session this client scans under. Session identity is the key the
+   * backend accumulates multi-turn risk against, so it should mean one unit
+   * of work: one agent run, one conversation, one user's request. Defaults to
+   * a process-wide id, which suits a CLI or a worker but not a server serving
+   * many end users, where each user needs its own session. Prefer
+   * `client.forSession(id)` per request.
+   */
+  sessionId?: string;
+  /**
+   * The agent this client scans as. Defaults to the process-wide id
+   * (`SHRIKE_AGENT_ID` when set). Set it when one process drives several
+   * distinct agents, so scope enforcement and agent attribution land on the
+   * right one.
+   */
+  agentId?: string;
 }
 
 /**
@@ -280,12 +355,22 @@ async function fetchWithRetry(
 
 /**
  * Build the session context object for backend requests.
+ *
+ * `sessionId` / `agentId` override the process-wide defaults. When no session
+ * id is supplied we warn once — see warnOnceAboutTheProcessSession for why the
+ * default stays rather than being removed.
  */
-function buildSessionContext(extraContext?: Record<string, unknown>): Record<string, unknown> {
+function buildSessionContext(
+  extraContext?: Record<string, unknown>,
+  sessionId?: string,
+  agentId?: string
+): Record<string, unknown> {
+  if (!sessionId) warnOnceAboutTheProcessSession();
+
   return {
     ...extraContext,
-    session_id: getSessionId(),
-    agent_id: getAgentId(),
+    session_id: sessionId || getSessionId(),
+    agent_id: agentId || getAgentId(),
     source_application: 'shrike-guard-ts',
   };
 }
@@ -358,6 +443,8 @@ export class ScanClient {
   private readonly timeout: number;
   private readonly rateLimiter: RateLimiter;
   private readonly onKeyRefresh?: () => Promise<string | null>;
+  private readonly sessionId?: string;
+  private readonly agentId?: string;
 
   constructor(options: ScanClientOptions) {
     this.apiKey = options.apiKey;
@@ -365,11 +452,54 @@ export class ScanClient {
     this.timeout = options.timeout || DEFAULT_SCAN_TIMEOUT;
     this.rateLimiter = new RateLimiter(options.rateLimitPerMinute || DEFAULT_RATE_LIMIT_PER_MINUTE);
     this.onKeyRefresh = options.onKeyRefresh;
+    this.sessionId = options.sessionId;
+    this.agentId = options.agentId;
 
     if (!this.apiKey) {
       console.warn('[shrike-guard] No API key provided — running in free tier (regex-only).');
       console.warn('[shrike-guard] For full scanning (LLM analysis, session correlation): npx shrike-mcp --signup');
     }
+  }
+
+  /**
+   * Return a view of this client that scans under `sessionId`.
+   *
+   * The returned client SHARES this one's rate limiter, so deriving one per
+   * request is cheap and cannot multiply your rate budget. Build one ScanClient
+   * at startup and derive a per-request view from it:
+   *
+   * ```ts
+   * const guard = new ScanClient({ apiKey: KEY });   // once, at startup
+   *
+   * app.post('/act', async (req, res) => {           // per request
+   *   const scoped = guard.forSession(req.session.id);
+   *   const verdict = await scoped.scanCommand(req.body.command);
+   * });
+   * ```
+   *
+   * Without this, every end user shares one session id and therefore one risk
+   * score, and one user's refusal counts against the next user's action.
+   */
+  forSession(sessionId: string, agentId?: string): ScanClient {
+    const view: ScanClient = Object.create(ScanClient.prototype);
+    // Written through a mutable alias because the fields are readonly on the
+    // class: this is a copy constructor, not a mutation of an existing client.
+    const w = view as unknown as Record<string, unknown>;
+    w.apiKey = this.apiKey;
+    w.endpoint = this.endpoint;
+    w.timeout = this.timeout;
+    // Shared deliberately — a per-request client with its own limiter would
+    // give every request a full rate budget and defeat the limit entirely.
+    w.rateLimiter = this.rateLimiter;
+    w.onKeyRefresh = this.onKeyRefresh;
+    w.sessionId = sessionId;
+    w.agentId = agentId !== undefined ? agentId : this.agentId;
+    return view;
+  }
+
+  /** Session identity for this client, with any per-call extras merged. */
+  private sessionContext(extraContext?: Record<string, unknown>): Record<string, unknown> {
+    return buildSessionContext(extraContext, this.sessionId, this.agentId);
   }
 
   /** Check rate limit before each request. */
@@ -420,7 +550,7 @@ export class ScanClient {
     const payload: Record<string, unknown> = {
       prompt,
       scan_type: 'full',
-      context: buildSessionContext(),
+      context: this.sessionContext(),
     };
     if (context) {
       payload.conversation_history = context;
@@ -451,8 +581,8 @@ export class ScanClient {
    * block verdict (fail-fast) so a compromised chunk doesn't pay for the
    * remaining scans.
    *
-   * Known limit: same session ID rides every chunk, so L9 turn count
-   * inflates by chunk-count. Fix post-launch via backend chunk_group field.
+   * Known limit: the same session id rides every chunk, so the session turn
+   * count grows by the number of chunks.
    */
   private async scanChunked(prompt: string, context?: string): Promise<ScanResult> {
     const chunks = chunkContent(prompt);
@@ -509,7 +639,7 @@ export class ScanClient {
     const payload = {
       content: query,
       content_type: 'sql',
-      context: buildSessionContext(toolContext),
+      context: this.sessionContext(toolContext),
     };
 
     const response = await fetchWithRetry(
@@ -566,7 +696,7 @@ export class ScanClient {
     const payload = {
       content: path,
       content_type: contentType,
-      context: buildSessionContext(extraContext),
+      context: this.sessionContext(extraContext),
     };
 
     const response = await fetchWithRetry(
@@ -630,7 +760,7 @@ export class ScanClient {
     const payload = {
       content: message,
       content_type: 'a2a_message',
-      context: buildSessionContext(extraContext),
+      context: this.sessionContext(extraContext),
     };
 
     const response = await fetchWithRetry(
@@ -686,7 +816,7 @@ export class ScanClient {
     const payload = {
       content: agentCard,
       content_type: 'agent_card',
-      context: buildSessionContext(extraContext),
+      context: this.sessionContext(extraContext),
     };
 
     const response = await fetchWithRetry(
@@ -703,6 +833,160 @@ export class ScanClient {
 
     if (!response.ok) {
       throw new Error(`Agent card scan API returned error: ${response.status}`);
+    }
+
+    return maybeAddSignupHint(sanitizeScanResponse((await response.json()) as ScanResult), this.apiKey);
+  }
+
+  /**
+   * Scan a shell command before executing it.
+   *
+   * The highest-volume act-plane surface, and the one the SDK could not
+   * reach until 4.1.0: `shrike.scanCommand(cmd)` before you shell out is the
+   * enforcement point. Catches destructive operations, fetch-and-execute
+   * chains, reverse shells, credential reads, anti-forensics, and SQL
+   * injection carried inside a database CLI argument (`psql -c "..."`),
+   * which the command's own grammar cannot see.
+   *
+   * @param command - The command line about to be executed.
+   * @param cwd - Optional working directory, for context.
+   * @returns Scan result; check `safe` and `refuse_tier` before executing.
+   */
+  async scanCommand(command: string, cwd?: string): Promise<ScanResult> {
+    const toolContext: Record<string, unknown> = {};
+    if (cwd) toolContext.cwd = cwd;
+    return this.scanSpecialized(command, 'command', 'Command', toolContext);
+  }
+
+  /**
+   * Scan a web search query before it reaches an external search engine.
+   *
+   * Catches PII and credentials leaving through a search box, credential
+   * dorking, evasion tradecraft, illicit acquisition, and attack-tool
+   * acquisition — while leaving ordinary defensive research alone.
+   *
+   * @param query - The search query about to be issued.
+   * @returns Scan result; check `safe` before searching.
+   */
+  async scanWebSearch(query: string): Promise<ScanResult> {
+    return this.scanSpecialized(query, 'web_search', 'Web search');
+  }
+
+  /**
+   * Scan a single MCP tool definition before trusting or registering it.
+   *
+   * Detects tool poisoning: instructions hidden in a tool's own
+   * `description`, which an agent reads as guidance and acts on without the
+   * tool ever executing. Call this on every entry of a `tools/list` response
+   * from a server you do not control.
+   *
+   * @param name - The tool name as advertised.
+   * @param description - The tool description to screen.
+   * @param inputSchema - Optional JSON schema; also screened.
+   * @returns Scan result; do not register the tool when `safe` is false.
+   */
+  async scanMcpSchema(
+    name: string,
+    description: string,
+    inputSchema?: Record<string, unknown>
+  ): Promise<ScanResult> {
+    this.checkRateLimit();
+
+    const payload = {
+      name,
+      description,
+      ...(inputSchema ? { input_schema: inputSchema } : {}),
+    };
+
+    const response = await fetchWithRetry(
+      `${this.endpoint}/api/scan/mcp_schema`,
+      {
+        method: 'POST',
+        headers: getScanHeaders(this.apiKey),
+        body: JSON.stringify(payload),
+      },
+      this.timeout,
+      this.apiKey,
+      this.onKeyRefresh
+    );
+
+    if (!response.ok) {
+      throw new Error(`MCP schema scan API returned error: ${response.status}`);
+    }
+
+    return maybeAddSignupHint(sanitizeScanResponse((await response.json()) as ScanResult), this.apiKey);
+  }
+
+  /**
+   * Scan retrieved context before feeding it to the model.
+   *
+   * RAG chunks are untrusted text from documents someone else wrote — the
+   * standard carrier for indirect prompt injection. Scan them on the way in,
+   * not after the model has already acted on them.
+   *
+   * @param chunks - The retrieved chunks, as text or an array of texts.
+   * @param query - Optional user query the chunks were retrieved for.
+   * @returns Scan result; check `safe` before including the context.
+   */
+  async scanRagContext(chunks: string | string[], query?: string): Promise<ScanResult> {
+    const content = Array.isArray(chunks) ? JSON.stringify(chunks) : chunks;
+    const toolContext: Record<string, unknown> = {};
+    if (query) toolContext.query = query;
+    return this.scanSpecialized(content, 'rag_context', 'RAG context', toolContext);
+  }
+
+  /**
+   * Shared transport for the specialized (act-plane) surfaces.
+   *
+   * Every act-plane method above differs only in content type, the label used
+   * in the error message, and any extra context. Before 4.1.0 each surface
+   * hand-rolled this block, which is how the SDK ended up with five of the
+   * eight channels missing: adding one meant copying forty lines. Now it
+   * means one method.
+   */
+  private async scanSpecialized(
+    content: string,
+    contentType: string,
+    label: string,
+    toolContext: Record<string, unknown> = {}
+  ): Promise<ScanResult> {
+    if (content.length > MAX_CONTENT_SIZE) {
+      return {
+        safe: false,
+        reason: `${label} content too large (${Math.round(content.length / 1024)}KB > ${MAX_CONTENT_SIZE / 1024}KB limit)`,
+        threat_type: 'size_limit_exceeded',
+        confidence: 1.0,
+        violations: [
+          {
+            type: 'size_limit',
+            description: `Content exceeds maximum size of ${MAX_CONTENT_SIZE / 1024}KB`,
+          },
+        ],
+      };
+    }
+
+    this.checkRateLimit();
+
+    const payload = {
+      content,
+      content_type: contentType,
+      context: this.sessionContext(toolContext),
+    };
+
+    const response = await fetchWithRetry(
+      `${this.endpoint}/api/scan/enforce/specialized`,
+      {
+        method: 'POST',
+        headers: getScanHeaders(this.apiKey),
+        body: JSON.stringify(payload),
+      },
+      this.timeout,
+      this.apiKey,
+      this.onKeyRefresh
+    );
+
+    if (!response.ok) {
+      throw new Error(`${label} scan API returned error: ${response.status}`);
     }
 
     return maybeAddSignupHint(sanitizeScanResponse((await response.json()) as ScanResult), this.apiKey);
@@ -727,30 +1011,43 @@ export class ScanClient {
    * @param options.allowedTools - Exact tool names permitted; ["*"] = any.
    * @param options.forbiddenTools - Optional. Wins over allowedTools.
    * @param options.purpose - Optional audit + dashboard label.
-   * @param options.maxDurationSeconds - Optional TTL from created_at.
+   * @param options.maxDurationSeconds - Optional TTL from the latest declaration.
    * @param options.expiresAt - Optional ISO-8601 absolute expiry.
-   * @returns The persisted scope row, including scope_id + active_until.
+   * @param options.renewableSeconds - Optional renewal window: how long, from
+   *   the operator's grant, this key may keep refreshing the scope. Honoured
+   *   on a first declaration; on a refresh the stored value always wins.
+   * @returns The persisted scope row, including scope_id, active_until and
+   *   renewable_until.
+   *
+   * Refreshing: once the scope exists, calling again from the agent's own key
+   * is a refresh. Any option left out is inherited from the scope on file, so
+   * `{ agentId, maxDurationSeconds: 7200 }` is a complete refresh. A refresh
+   * may narrow but never widen (403, reason "widening"), and stops working
+   * once the operator's renewal window closes (403, reason "ceiling_reached").
    */
   async declareScope(options: {
     agentId: string;
-    allowedTools: string[];
+    /** Required on a first declaration; omit on a refresh to inherit. */
+    allowedTools?: string[];
     forbiddenTools?: string[];
     purpose?: string;
     maxDurationSeconds?: number;
     expiresAt?: string;
+    renewableSeconds?: number;
   }): Promise<DeclareScopeResult> {
     this.checkRateLimit();
 
     const payload: Record<string, unknown> = {
       agent_id: options.agentId,
-      allowed_tools: options.allowedTools,
     };
+    if (options.allowedTools !== undefined) payload.allowed_tools = options.allowedTools;
     if (options.purpose !== undefined) payload.purpose = options.purpose;
     if (options.forbiddenTools !== undefined) payload.forbidden_tools = options.forbiddenTools;
     if (options.maxDurationSeconds !== undefined) {
       payload.max_duration_seconds = options.maxDurationSeconds;
     }
     if (options.expiresAt !== undefined) payload.expires_at = options.expiresAt;
+    if (options.renewableSeconds !== undefined) payload.renewable_seconds = options.renewableSeconds;
 
     const response = await fetchWithRetry(
       `${this.endpoint}/api/v1/agent/scope/declare`,

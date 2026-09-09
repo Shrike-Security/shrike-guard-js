@@ -172,7 +172,7 @@ describe('syncPIIPatterns — failure preserves fallback', () => {
   });
 });
 
-// 2026-07-02 U1 regression: the SDK's PREFIX_MAP allowlist silently dropped
+// Regression guard: the SDK's PREFIX_MAP allowlist once silently dropped
 // any backend PII pattern whose threat_type wasn't in the hardcoded list.
 // A newly-added `pii_ip_address` recognizer never redacted client-side even
 // though the backend was actively detecting it. Same bug MCP had; retired

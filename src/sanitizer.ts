@@ -286,6 +286,13 @@ const PRESERVED_GOVERNANCE_FIELDS = [
   'recovery',
   'session_state',
   'content_type',
+  // Provenance: human_prompt / agent_output / agent_action / third_party.
+  // An OUTCOME field, not detection attribution — it says who is answerable
+  // for the scanned content, which the caller needs in order to know who a
+  // refusal is even addressed to. It shipped on the backend in 2cfaa5f and was
+  // silently dropped here, because this is an allow-list and nobody added it:
+  // a new backend field reaches no caller until it appears in this array.
+  'content_origin',
   'approval_info',
   'client_session_rotation',
 ] as const;
