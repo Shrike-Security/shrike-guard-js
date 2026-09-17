@@ -1,5 +1,64 @@
 # Changelog
 
+## [4.2.0] - 2026-09-17
+
+### Added
+- **An unmapped tool can still be judged by its name.** A tool with no
+  mapping has no readable surface, so the content plane has nothing to say
+  about it. The authorization plane still does: the operator's declared scope
+  judges a tool by NAME, which is the one thing every tool call has.
+  `onUnmapped: 'authorize'` sends the tool's name (and nothing else) to the
+  backend, so a tool outside the allowlist is refused even though nothing
+  read what it was carrying, and an expired or exhausted scope holds it. The
+  permit is narrower than a mapped tool's and the record says so: the
+  decision's surface is `authorization`, never a scanned surface. A client
+  too old to ask fails according to `failMode` rather than assuming.
+  `ShrikeGuard.authorizeTool` is the call underneath.
+- **Observe-plane scans say so.** `ShrikeGuard.scan` takes an options argument
+  carrying `plane`, and `observePrompt` sends `plane: 'observe'`. A verdict on a prompt nobody is
+  gated on is advice: it is recorded and returned, and the model still reads
+  the note, but it is no longer filed as an action that was stopped.
+
+- **Framework starters over one core.** `govern.ts` is the framework-free
+  core of a governed agent: a tool mapping table (`mapTool`, `exempt`),
+  `evaluate` (every scan a tool call needs, stopping at the first refusal,
+  into one `Outcome`: allow, warn, hold or deny, with the message written
+  for the model), `observePrompt` (never blocks), `requestScope` (the
+  backend decides; a widening is refused unless an operator grants it), and
+  the record (`decisions`, `onDecision`). Each starter is a subpath and a
+  thin translation of one framework's hooks:
+  - `shrike-guard/claude-agent` (Claude Agent SDK): `PreToolUse` and
+    `UserPromptSubmit` hooks, an in-process MCP tool. Ships mappings for the
+    SDK's built-in tools. ESM, as the SDK is.
+  - `shrike-guard/openai-agents` (OpenAI Agents SDK): a tool input guardrail
+    attached to every function tool (a refused call is answered with
+    `rejectContent`, so the model reads the reason as the tool's output), a
+    non-tripping input guardrail for the observe plane, and `request_scope`
+    as a function tool.
+  - `shrike-guard/ai` (Vercel AI SDK): `governTools` wraps each tool's
+    `execute` so a refused call returns the reason as the tool's result, a
+    language-model middleware whose `transformParams` scans a new user
+    message and prepends a note, and `request_scope` as an AI SDK tool.
+  - `shrike-guard/langchain` (LangChain `createAgent` and LangGraph): an
+    agent middleware whose `wrapToolCall` answers a refused call with a
+    `ToolMessage`, or `governTools` for a hand-built `ToolNode`, and
+    `request_scope` as a LangChain tool.
+- **Tool mappings.** A tool is a surface (`command`, `file`, `file_path`,
+  `sql`, `web_search`, `rag_context`, `a2a_message`, `agent_card`, or
+  `none`) and the argument that carries its payload. A tool with no mapping
+  is refused with a message that says how to map it (`onUnmapped: 'deny'`),
+  or allowed and recorded (`'allow'`), or has its arguments scanned as text
+  (`'scan'`), or judged by name alone (`'authorize'`, see below). The Claude
+  Agent SDK starter defaults to `'authorize'`, and its hook now sees every
+  tool the agent can call rather than only the mapped ones, because a tool
+  with no reader is exactly the one whose authorization nobody has checked.
+  Pass an explicit tool list to `hooksFor` to narrow the matcher.
+- **A conformance suite.** `tests/unit/frameworks.test.ts` drives every
+  starter through the same table (allow, warn, block, hold, backend down,
+  unmapped, a refused widening); each starter must answer it the same way.
+  The frameworks are optional peer dependencies; the base install is
+  unchanged.
+
 ## [4.1.0] - 2026-09-09
 
 ### Added

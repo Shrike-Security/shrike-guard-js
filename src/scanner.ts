@@ -518,7 +518,11 @@ export class ScanClient {
    * @returns Scan result with 'safe' boolean and additional details.
    * @throws Error if the request fails or times out.
    */
-  async scan(prompt: string, context?: string): Promise<ScanResult> {
+  async scan(
+    prompt: string,
+    context?: string,
+    options?: { plane?: string }
+  ): Promise<ScanResult> {
     // Client-side size validation to fail fast
     const totalSize = prompt.length + (context?.length || 0);
     if (totalSize > MAX_CONTENT_SIZE) {
@@ -542,7 +546,7 @@ export class ScanClient {
     // conversation_history context is NOT chunked — it rides on every scan
     // so downstream layers see the same session shape.
     if (prompt.length > AUTO_CHUNK_THRESHOLD) {
-      return this.scanChunked(prompt, context);
+      return this.scanChunked(prompt, context, options);
     }
 
     this.checkRateLimit();
@@ -550,7 +554,7 @@ export class ScanClient {
     const payload: Record<string, unknown> = {
       prompt,
       scan_type: 'full',
-      context: this.sessionContext(),
+      context: this.sessionContext(options?.plane ? { plane: options.plane } : undefined),
     };
     if (context) {
       payload.conversation_history = context;
@@ -584,11 +588,15 @@ export class ScanClient {
    * Known limit: the same session id rides every chunk, so the session turn
    * count grows by the number of chunks.
    */
-  private async scanChunked(prompt: string, context?: string): Promise<ScanResult> {
+  private async scanChunked(
+    prompt: string,
+    context?: string,
+    options?: { plane?: string }
+  ): Promise<ScanResult> {
     const chunks = chunkContent(prompt);
     const results: ScanResult[] = [];
     for (const chunk of chunks) {
-      const chunkResult = await this.scan(chunk, context);
+      const chunkResult = await this.scan(chunk, context, options);
       results.push(chunkResult);
       const action = chunkResult.action || chunkResult.refuse_tier;
       if (action === 'block') {
@@ -852,6 +860,41 @@ export class ScanClient {
    * @param cwd - Optional working directory, for context.
    * @returns Scan result; check `safe` and `refuse_tier` before executing.
    */
+  /**
+   * Ask whether this agent may call a tool, without sending its arguments.
+   *
+   * For a tool this SDK has no reader for. The operator's declared scope
+   * judges a tool by NAME, so a tool nobody can parse is still refused when
+   * it is not on the allowlist, and still held when the scope has expired or
+   * run out of actions.
+   *
+   * This answers one question. A permit says the agent was allowed to make
+   * the call; it never says the arguments were inspected, because none were
+   * sent. Where a tool maps to one of the scanned surfaces, scan that surface
+   * instead and get both answers.
+   *
+   * @param toolName - The tool about to run.
+   * @returns Scan result; check `safe` and `refuse_tier` before running.
+   */
+  async authorizeTool(toolName: string): Promise<ScanResult> {
+    this.checkRateLimit();
+    const response = await fetchWithRetry(
+      `${this.endpoint}/api/scan/authorize`,
+      {
+        method: 'POST',
+        headers: getScanHeaders(this.apiKey),
+        body: JSON.stringify({ tool_name: toolName, context: this.sessionContext() }),
+      },
+      this.timeout,
+      this.apiKey,
+      this.onKeyRefresh
+    );
+    if (!response.ok) {
+      throw new Error(`Tool authorization API returned error: ${response.status}`);
+    }
+    return maybeAddSignupHint(sanitizeScanResponse((await response.json()) as ScanResult), this.apiKey);
+  }
+
   async scanCommand(command: string, cwd?: string): Promise<ScanResult> {
     const toolContext: Record<string, unknown> = {};
     if (cwd) toolContext.cwd = cwd;
