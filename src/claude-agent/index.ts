@@ -107,19 +107,40 @@ export class Governance extends CoreGovernance {
   readonly toolNames: string[] = [REQUEST_SCOPE_TOOL];
   private hooksCache?: Partial<Record<HookEvent, HookCallbackMatcher[]>>;
   private serverCache?: McpSdkServerConfigWithInstance;
+  /** Outcomes of calls that may still run, by tool_use_id, until the SDK says what became of them. */
+  private readonly pending = new Map<string, Awaited<ReturnType<CoreGovernance['evaluate']>>>();
 
   constructor(guard: Guard | ScanClient, options: GovernanceOptions) {
     super(guard, { ...options, tools: { ...DEFAULT_TOOLS, ...(options.tools ?? {}) }, onUnmapped: options.onUnmapped ?? 'authorize' });
   }
 
   /** The act-plane hook. Returns the SDK's hook output. */
-  readonly preToolUse: HookCallback = async (input: HookInput): Promise<HookJSONOutput> => {
+  readonly preToolUse: HookCallback = async (input: HookInput, toolUseID?: string): Promise<HookJSONOutput> => {
     if (input.hook_event_name !== 'PreToolUse') return {};
     const args = (input.tool_input && typeof input.tool_input === 'object' ? input.tool_input : {}) as Record<string, unknown>;
     const out = await this.evaluate(input.tool_name, args, 'PreToolUse');
-    if (out.decision === 'hold') return preToolOutput(this.onHold === 'ask' ? 'ask' : 'deny', out.message);
     if (out.decision === 'deny') return preToolOutput('deny', out.message);
+    // Allowed, warned, or held for a person's answer: the call may still
+    // run, and the SDK says so later under the same tool_use_id.
+    if (toolUseID) {
+      this.pending.set(toolUseID, out);
+      if (this.pending.size > 512) this.pending.delete(this.pending.keys().next().value as string);
+    }
+    if (out.decision === 'hold') return preToolOutput(this.onHold === 'ask' ? 'ask' : 'deny', out.message);
     if (out.advisories.length) return { hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: out.advisories.join(' ') } };
+    return {};
+  };
+
+  /**
+   * The outcome hook: reports executed (PostToolUse) or failed
+   * (PostToolUseFailure) for the call the act-plane hook gated. Never
+   * blocks and never reads the tool's result.
+   */
+  readonly postToolUse: HookCallback = async (input: HookInput, toolUseID?: string): Promise<HookJSONOutput> => {
+    if (input.hook_event_name !== 'PostToolUse' && input.hook_event_name !== 'PostToolUseFailure') return {};
+    const out = toolUseID ? this.pending.get(toolUseID) : undefined;
+    if (toolUseID) this.pending.delete(toolUseID);
+    if (out) await this.reportOutcome(out, input.hook_event_name === 'PostToolUse' ? 'executed' : 'failed');
     return {};
   };
 
@@ -149,10 +170,12 @@ export class Governance extends CoreGovernance {
     // whose authorization nobody has checked, so the gate has to see it;
     // `onUnmapped` then decides what happens. Naming tools narrows the
     // matcher, at the cost of everything left outside it going unseen.
+    const pattern = toolNames?.length ? toolNames.join('|') : undefined;
+    const withMatcher = (hooks: HookCallback[]): HookCallbackMatcher[] => (pattern ? [{ matcher: pattern, hooks }] : [{ hooks }]);
     const matchers: Partial<Record<HookEvent, HookCallbackMatcher[]>> = {
-      PreToolUse: toolNames?.length
-        ? [{ matcher: toolNames.join('|'), hooks: [this.preToolUse] }]
-        : [{ hooks: [this.preToolUse] }],
+      PreToolUse: withMatcher([this.preToolUse]),
+      PostToolUse: withMatcher([this.postToolUse]),
+      PostToolUseFailure: withMatcher([this.postToolUse]),
     };
     if (this.observe) matchers.UserPromptSubmit = [{ hooks: [this.userPromptSubmit] }];
     return matchers;

@@ -1,5 +1,5 @@
 /**
- * Session rotation contract, ported from the MCP client's two-shape record.
+ * Session rotation contract, ported from the MCP client's three-shape record.
  *
  * When a scan response indicates the session should rotate (either the
  * backend returned an explicit "session_locked" verdict, or the
@@ -15,7 +15,13 @@
  *   SESSION_ID and instead returns a recommendation the developer can
  *   act on inside their own control flow.
  *
- * The discriminant is the `rotated` boolean plus the `owner` field.
+ * - **Locked**: the backend returned `session_locked`. Neither shape
+ *   above applies, because nothing should rotate. The lock is the
+ *   control; a fresh session_id sidesteps it rather than clearing it.
+ *   A `SessionLockedNotice` is returned so the integrator LEARNS the
+ *   session locked, with no new id offered on either ownership.
+ *
+ * The discriminant is the `rotated` boolean plus `rotation_recommended`.
  * `evaluateRotation` is a pure function — it does not mutate module
  * state on its own. Rotation of the module SESSION_ID is the SDK
  * caller's responsibility once they act on a `ModuleOwnedRotation`.
@@ -31,13 +37,13 @@ export interface ModuleOwnedRotation {
   rotated: true;
   /** Who owns the session lifecycle. `sdk_client` = SDK's module SESSION_ID. */
   owner: 'sdk_client';
-  /** Why rotation is being signalled. */
-  reason: 'session_locked' | 'risk_threshold_exceeded';
+  /** A locked session never rotates, so the score is the only trigger here. */
+  reason: 'risk_threshold_exceeded';
   /** The SDK's fallback session_id that was in force before rotation. */
   previous_session_id: string;
   /** The fresh session_id the SDK caller should adopt for subsequent scans. */
   new_session_id: string;
-  /** For "risk_threshold_exceeded", the score that crossed. For "session_locked", the score if the response carried one. */
+  /** The score that crossed the threshold. */
   triggering_risk_score?: number;
   /** The threshold in force at the time of evaluation (reproducibility). */
   configured_threshold?: number;
@@ -66,8 +72,8 @@ export interface CallerOwnedRotationRecommendation {
   rotation_recommended: true;
   /** Who owns the session lifecycle. `caller` = the SDK caller supplied session_id. */
   owner: 'caller';
-  /** Why the SDK is recommending rotation. */
-  reason: 'session_locked' | 'risk_threshold_exceeded';
+  /** A locked session never rotates, so the score is the only trigger here. */
+  reason: 'risk_threshold_exceeded';
   /** The session_id the caller supplied on this scan, echoed back for correlation. */
   current_session_id: string;
   /**
@@ -81,10 +87,34 @@ export interface CallerOwnedRotationRecommendation {
 }
 
 /**
- * Discriminated union — the value returned to describe what happened
- * (or should happen). Discriminate on `rotated`.
+ * Emitted when the backend locked the session. Nothing rotated and nothing
+ * should: a fresh session_id sidesteps the lock instead of clearing it. A lock
+ * lifts by a self-release under a live declared scope, or by an operator.
+ *
+ * Discriminant: `rotated: false` + `rotation_recommended: false`. No
+ * `suggested_new_session_id` on this shape, deliberately.
  */
-export type SessionRotation = ModuleOwnedRotation | CallerOwnedRotationRecommendation;
+export interface SessionLockedNotice {
+  rotated: false;
+  rotation_recommended: false;
+  /** Whose session the lock landed on. Neither is mutated. */
+  owner: 'sdk_client' | 'caller';
+  reason: 'session_locked';
+  /** The session_id that is locked, echoed back for correlation. */
+  current_session_id: string;
+  triggering_risk_score?: number;
+  configured_threshold?: number;
+}
+
+/**
+ * Discriminated union — the value returned to describe what happened
+ * (or should happen). Discriminate on `rotated`, then on
+ * `rotation_recommended`.
+ */
+export type SessionRotation =
+  | ModuleOwnedRotation
+  | CallerOwnedRotationRecommendation
+  | SessionLockedNotice;
 
 /**
  * Configured risk-score threshold above which `evaluateRotation` emits
@@ -144,15 +174,31 @@ export function evaluateRotation(input: RotationTriggerInput): SessionRotation |
   const locked = input.threat_type === 'session_locked';
   const overThreshold = typeof risk === 'number' && risk >= ROTATION_THRESHOLD;
 
-  if (!locked && !overThreshold) {
+  const isCallerOwned = input.effective_session_id !== input.module_session_id;
+
+  // A locked session is never rotated and never recommended for rotation.
+  // Checked BEFORE the score branch, because a locked session is already
+  // above the threshold and would otherwise fall through to it.
+  if (locked) {
+    const notice: SessionLockedNotice = {
+      rotated: false,
+      rotation_recommended: false,
+      owner: isCallerOwned ? 'caller' : 'sdk_client',
+      reason: 'session_locked',
+      current_session_id: input.effective_session_id,
+    };
+    if (typeof risk === 'number') {
+      notice.triggering_risk_score = risk;
+    }
+    notice.configured_threshold = ROTATION_THRESHOLD;
+    return notice;
+  }
+
+  if (!overThreshold) {
     return null;
   }
 
-  const reason: 'session_locked' | 'risk_threshold_exceeded' = locked
-    ? 'session_locked'
-    : 'risk_threshold_exceeded';
-
-  const isCallerOwned = input.effective_session_id !== input.module_session_id;
+  const reason = 'risk_threshold_exceeded' as const;
 
   if (isCallerOwned) {
     const rec: CallerOwnedRotationRecommendation = {

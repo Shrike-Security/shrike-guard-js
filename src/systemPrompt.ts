@@ -1,7 +1,7 @@
 /**
  * Canonical 'Working with Shrike' system-prompt block.
  *
- * Exposes the ~180-word block that teaches an agent how to react to
+ * Exposes the block that teaches an agent how to react to
  * Shrike verdicts (the four refuse_tier states, the injected-message
  * prefix contract emitted by formatBlockFeedback, the per-event
  * rotation-recommendation contract).
@@ -28,7 +28,7 @@
  * Mirrors platform/sdks/python/src/shrike_guard/system_prompt.py.
  * Keep the two in sync when the block content changes.
  *
- * Version: v1.0 (2026-07-06).
+ * Version: v1.0.
  */
 
 const BLOCK_V1_0 =
@@ -48,9 +48,11 @@ Patterns triggered, those are correlator signals across your recent
 turns; treat them as evidence your current strategy is being read as
 adversarial.
 
-If Shrike returns a rotation recommendation (rotation_recommended:
-true), adopt the suggested_new_session_id on your very next tool call.
-Do not cache suggested ids across turns; they are minted per event.
+If Shrike recommends rotation (rotation_recommended: true), adopt the
+suggested_new_session_id on your next call; ids are per event, never
+cached. If the session is locked, none is offered and you must not
+mint one: a new id hides history rather than clearing the lock. Ask
+the operator to release it and say so.
 
 Shrike is a collaborator, not an obstacle. When it flags something,
 the fastest recovery is to explain your intent and pick a different
@@ -75,7 +77,7 @@ export const SYSTEM_PROMPT_VERSION = '1.0';
  *   '\n\nWhen customers ask about refunds, first verify...';
  * ```
  *
- * @returns The block string (~180 words, no trailing newline).
+ * @returns The block string, with no trailing newline.
  */
 export function systemPrompt(): string {
   return BLOCK_V1_0;

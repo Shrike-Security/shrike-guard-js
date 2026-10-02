@@ -85,6 +85,15 @@ export interface Guard {
     purpose?: string;
     maxDurationSeconds?: number;
   }): Promise<Record<string, unknown>>;
+  /**
+   * Report what became of a scanned action: executed, failed (with the
+   * host's exit status when it has one) or skipped. Optional so an older
+   * client still satisfies the interface; without it nothing is reported,
+   * and an unreported action reads as unconfirmed, which is what it is.
+   */
+  reportOutcome?(scanId: string, outcome: ActionOutcome, options?: { exitStatus?: number; source?: string }): Promise<void>;
+  /** Report the host's own decision about an action, under the host's name. */
+  reportHostOutcome?(report: HostOutcomeReport): Promise<void>;
 }
 
 /** One governed event and what Shrike said about it. */
@@ -101,6 +110,25 @@ export interface Decision {
   verdict: Record<string, unknown>;
   /** The hook, event or tool that produced this decision. */
   event: string;
+  /** The backend's record of the scan, when it kept one; what `reportOutcome` names. */
+  scanId?: string;
+}
+
+/** What became of a governed action, as the integration saw it. */
+export type ActionOutcome = 'executed' | 'failed' | 'skipped';
+
+/** A host's own decision about an action, reported beside Shrike's. */
+export interface HostOutcomeReport {
+  /** A short lowercase slug naming the host: crewai, google-adk, openai-agents. */
+  host: string;
+  outcome: 'denied' | 'failed';
+  tool?: string;
+  callId?: string;
+  /** A hex digest of the tool input, never the input. */
+  contentHash?: string;
+  /** The host's stated reason, in its own words. */
+  reason?: string;
+  scanId?: string;
 }
 
 export function isDenied(d: Decision): boolean {
@@ -259,7 +287,7 @@ export function readVerdict(tool: string, surface: string, target: string, v: Sc
       `Attempted: ${intent.attempted || surface}. ` +
       `Objected on: ${axis || '-'} (${intent.objection || threat}).`;
   }
-  return { tool, surface, target, tier, threatType: threat, reason, recovery: recoveryText.trim(), axis, verdict: r, event };
+  return { tool, surface, target, tier, threatType: threat, reason, recovery: recoveryText.trim(), axis, verdict: r, event, scanId: String(r.scan_id || '') };
 }
 
 export interface GovernanceOptions {
@@ -339,6 +367,25 @@ export class Governance {
     this.decisions.push(d);
     this.onDecision?.(d);
     return d;
+  }
+
+  /**
+   * Report what became of a governed action once it ran or failed: one
+   * report per decision the backend kept a record of. Never throws and is
+   * safe to leave un-awaited; an unreported action reads as unconfirmed,
+   * which is what it was. Identifiers and a status only.
+   */
+  async reportOutcome(out: Outcome, outcome: ActionOutcome, options: { exitStatus?: number } = {}): Promise<void> {
+    const report = this.guard.reportOutcome?.bind(this.guard);
+    if (!report) return;
+    for (const d of out.decisions) {
+      if (!d.scanId) continue;
+      try {
+        await report(d.scanId, outcome, { ...options, source: d.event });
+      } catch {
+        // A report that did not arrive leaves the action unconfirmed.
+      }
+    }
   }
 
   // -- the scans one call needs ---------------------------------------------

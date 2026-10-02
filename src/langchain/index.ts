@@ -85,7 +85,15 @@ export class Governance extends CoreGovernance {
     const name = String(call.name ?? '');
     const out = await this.evaluate(name, call.args ?? {}, 'wrapToolCall');
     if (!isAllowed(out)) return refusalMessage(out, String(call.id ?? ''), name);
-    return handler(request);
+    // The handler's return is the outcome in hand: report it, never read it.
+    try {
+      const result = await handler(request);
+      void this.reportOutcome(out, 'executed');
+      return result;
+    } catch (err) {
+      void this.reportOutcome(out, 'failed');
+      throw err;
+    }
   }
 
   /** Scan the latest human message in an agent state, once. */
@@ -105,7 +113,14 @@ export class Governance extends CoreGovernance {
         async (input: unknown) => {
           const out = await this.evaluate(name, (input && typeof input === 'object' ? input : { input }) as Record<string, unknown>, 'governedTool');
           if (!isAllowed(out)) return out.message;
-          return (inner as { invoke: (i: unknown) => Promise<unknown> }).invoke(input);
+          try {
+            const result = await (inner as { invoke: (i: unknown) => Promise<unknown> }).invoke(input);
+            void this.reportOutcome(out, 'executed');
+            return result;
+          } catch (err) {
+            void this.reportOutcome(out, 'failed');
+            throw err;
+          }
         },
         { name, description: inner.description, schema: (inner as { schema?: unknown }).schema as any }
       );

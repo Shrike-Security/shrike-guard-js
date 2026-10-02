@@ -1,8 +1,7 @@
 /**
- * Tests for src/rotation.ts — two-shape session rotation record.
+ * Tests for src/rotation.ts — three-shape session rotation record.
  *
- * Mirrors the shape verified live in prod (see the rotation-verification
- * record). Locks in:
+ * Locks in:
  *   - The discriminated union shape (rotated: true vs rotated: false)
  *   - Ownership detection via effective_session_id vs module_session_id
  *   - Trigger semantics (session_locked, risk >= ROTATION_THRESHOLD)
@@ -16,6 +15,7 @@ import {
   ROTATION_THRESHOLD,
   type ModuleOwnedRotation,
   type CallerOwnedRotationRecommendation,
+  type SessionLockedNotice,
 } from '../../src/rotation';
 
 const MODULE_SESSION = 'module-fixed-uuid-11111111-1111-1111-1111-111111111111';
@@ -78,24 +78,47 @@ describe('evaluateRotation', () => {
       expect(result.configured_threshold).toBe(ROTATION_THRESHOLD);
     });
 
-    it('emits reason: session_locked when threat_type is session_locked', () => {
+    it('session_locked does NOT rotate; it emits a notice with no new id', () => {
+      // The lock is the control. Rotating past it sidesteps the control
+      // rather than clearing it, which is what the backend's own recovery
+      // instruction tells the agent not to do. A lock lifts by a
+      // self-release under a live declared scope, or by an operator.
       const result = evaluateRotation({
         threat_type: 'session_locked',
         effective_session_id: MODULE_SESSION,
         module_session_id: MODULE_SESSION,
-      }) as ModuleOwnedRotation;
+      }) as SessionLockedNotice;
 
       expect(result.reason).toBe('session_locked');
-      expect(result.rotated).toBe(true);
+      expect(result.rotated).toBe(false);
+      expect(result.rotation_recommended).toBe(false);
       expect(result.owner).toBe('sdk_client');
+      expect(result.current_session_id).toBe(MODULE_SESSION);
+      expect((result as unknown as Record<string, unknown>).new_session_id).toBeUndefined();
+      expect((result as unknown as Record<string, unknown>).suggested_new_session_id).toBeUndefined();
     });
 
-    it('session_locked without risk still emits a valid record (no triggering_risk_score)', () => {
+    it('a locked session is not rotated even when risk is above threshold', () => {
+      // This ordering is the whole fix: a locked session is ALREADY above
+      // the score threshold, so checking the score first would rotate it.
+      const result = evaluateRotation({
+        threat_type: 'session_locked',
+        session_state: { session_risk_score: 0.95 },
+        effective_session_id: MODULE_SESSION,
+        module_session_id: MODULE_SESSION,
+      }) as SessionLockedNotice;
+
+      expect(result.rotated).toBe(false);
+      expect(result.rotation_recommended).toBe(false);
+      expect(result.triggering_risk_score).toBe(0.95);
+    });
+
+    it('session_locked without risk still emits a valid notice (no triggering_risk_score)', () => {
       const result = evaluateRotation({
         threat_type: 'session_locked',
         effective_session_id: MODULE_SESSION,
         module_session_id: MODULE_SESSION,
-      }) as ModuleOwnedRotation;
+      }) as SessionLockedNotice;
 
       expect(result.triggering_risk_score).toBeUndefined();
       expect(result.configured_threshold).toBe(ROTATION_THRESHOLD);
@@ -138,15 +161,20 @@ describe('evaluateRotation', () => {
       expect(originalModuleId).toBe(MODULE_SESSION);
     });
 
-    it('emits reason: session_locked when threat_type is session_locked', () => {
+    it('session_locked emits a notice, and suggests nothing to the caller either', () => {
       const result = evaluateRotation({
         threat_type: 'session_locked',
         effective_session_id: CALLER_SESSION,
         module_session_id: MODULE_SESSION,
-      }) as CallerOwnedRotationRecommendation;
+      }) as SessionLockedNotice;
 
       expect(result.reason).toBe('session_locked');
       expect(result.owner).toBe('caller');
+      expect(result.rotation_recommended).toBe(false);
+      expect(result.current_session_id).toBe(CALLER_SESSION);
+      // A caller who owns the session still must not be told that minting
+      // a new id is the way past a lock.
+      expect((result as unknown as Record<string, unknown>).suggested_new_session_id).toBeUndefined();
     });
   });
 

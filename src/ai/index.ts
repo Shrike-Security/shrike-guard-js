@@ -92,7 +92,15 @@ export class Governance extends CoreGovernance {
         execute: async (input: unknown, options: unknown) => {
           const verdict = await this.evaluate(name, asRecord(input), 'execute');
           if (!isAllowed(verdict)) return verdict.message;
-          return execute(input, options);
+          // The tool's return is the outcome in hand: report it, never read it.
+          try {
+            const result = await execute(input, options);
+            void this.reportOutcome(verdict, 'executed');
+            return result;
+          } catch (err) {
+            void this.reportOutcome(verdict, 'failed');
+            throw err;
+          }
         },
       } as Tool;
     }

@@ -19,6 +19,7 @@ import { AUTO_CHUNK_THRESHOLD, aggregateChunkResults, chunkContent } from './chu
 import { ShrikeRateLimitError } from './errors';
 import { RateLimiter } from './rateLimiter';
 import { sanitizeScanResponse } from './sanitizer';
+import type { ActionOutcome, HostOutcomeReport } from './govern';
 import { VERSION } from './version';
 
 /**
@@ -123,6 +124,12 @@ export interface ScanResult {
   action?: ScanAction;
   /** Refuse tier: allow / warn / require_approval / block */
   refuse_tier?: ScanAction;
+  /**
+   * The persisted record of this scan, so the integration can report what
+   * became of the action with `reportOutcome`. Absent when the backend kept
+   * no row (anonymous, degraded).
+   */
+  scan_id?: string;
   /** Recovery guidance, present on refuse verdicts */
   recovery?: ScanRecovery;
   /** L9 session correlation state — outcome, customer-visible */
@@ -893,6 +900,52 @@ export class ScanClient {
       throw new Error(`Tool authorization API returned error: ${response.status}`);
     }
     return maybeAddSignupHint(sanitizeScanResponse((await response.json()) as ScanResult), this.apiKey);
+  }
+
+  /**
+   * Report what became of a scanned action: executed, failed (with the
+   * host's exit status when it has one) or skipped. Names the scan by the
+   * `scan_id` the verdict carried. Identifiers and a status only, never
+   * output or error text. Never throws: an unreported action reads as
+   * unconfirmed, which is what it is.
+   */
+  async reportOutcome(scanId: string, outcome: ActionOutcome, options: { exitStatus?: number; source?: string } = {}): Promise<void> {
+    if (!scanId) return;
+    const body: Record<string, unknown> = { scan_id: scanId, outcome, ran_at: new Date().toISOString(), source: options.source || 'shrike-guard-js' };
+    if (Number.isInteger(options.exitStatus)) body.exit_status = options.exitStatus;
+    await this.postReport('/api/scan/outcome', body);
+  }
+
+  /**
+   * Report the host's own decision about an action, under the host's name:
+   * a framework guardrail that refused a call, a tool the host ran that
+   * failed. Recorded beside Shrike's decisions, never as one of them.
+   */
+  async reportHostOutcome(report: HostOutcomeReport): Promise<void> {
+    if (!report?.host) return;
+    const body: Record<string, unknown> = { host: report.host, outcome: report.outcome };
+    if (this.sessionId) body.session_id = this.sessionId;
+    if (this.agentId) body.agent_id = this.agentId;
+    if (report.tool) body.tool = report.tool;
+    if (report.callId) body.call_id = report.callId;
+    if (report.contentHash) body.content_hash = report.contentHash;
+    if (report.reason) body.reason = report.reason;
+    if (report.scanId) body.scan_id = report.scanId;
+    await this.postReport('/api/scan/host-outcome', body);
+  }
+
+  private async postReport(path: string, body: Record<string, unknown>): Promise<void> {
+    try {
+      await fetchWithRetry(
+        `${this.endpoint}${path}`,
+        { method: 'POST', headers: getScanHeaders(this.apiKey), body: JSON.stringify(body) },
+        this.timeout,
+        this.apiKey,
+        this.onKeyRefresh
+      );
+    } catch {
+      // The record is best effort; the verdict already stood.
+    }
   }
 
   async scanCommand(command: string, cwd?: string): Promise<ScanResult> {

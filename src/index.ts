@@ -45,11 +45,13 @@ export type {
   ContentOrigin,
 } from './scanner';
 
-// Session rotation (two-shape record — mirrors MCP client contract)
+// Session rotation (three-shape record — mirrors MCP client contract).
+// A locked session emits SessionLockedNotice and never rotates.
 export { evaluateRotation, ROTATION_THRESHOLD } from './rotation';
 export type {
   ModuleOwnedRotation,
   CallerOwnedRotationRecommendation,
+  SessionLockedNotice,
   SessionRotation,
   RotationTriggerInput,
 } from './rotation';
@@ -89,7 +91,7 @@ export {
 } from './piiRedactor';
 export type { PIIPattern, RedactionEntry, RedactionResult } from './piiRedactor';
 
-// PII pattern sync (fetches canonical Presidio-derived pattern set from backend)
+// PII pattern sync (fetches the canonical pattern set from the backend)
 export { syncPIIPatterns } from './piiSync';
 export type { SyncPIIPatternsOptions } from './piiSync';
 

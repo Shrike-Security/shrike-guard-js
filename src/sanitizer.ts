@@ -293,6 +293,9 @@ const PRESERVED_GOVERNANCE_FIELDS = [
   // silently dropped here, because this is an allow-list and nobody added it:
   // a new backend field reaches no caller until it appears in this array.
   'content_origin',
+  // The persisted record of this scan, which reportOutcome names. An
+  // identifier, not attribution.
+  'scan_id',
   'approval_info',
   'client_session_rotation',
 ] as const;

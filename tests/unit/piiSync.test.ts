@@ -136,7 +136,7 @@ describe('syncPIIPatterns — failure preserves fallback', () => {
   });
 
   it('unparseable regexes across ALL entries keep bootstrap patterns', async () => {
-    // Post-2026-07-02 contract: unknown threat_types no longer silently
+    // Current contract: unknown threat_types are never silently
     // drop — they derive a fallback prefix (see backend-owned prefix
     // regression test below). So the "everything unknown → keep fallback"
     // behavior only fires when the backend gives us nothing PARSEABLE.
@@ -172,7 +172,7 @@ describe('syncPIIPatterns — failure preserves fallback', () => {
   });
 });
 
-// Regression guard: the SDK's PREFIX_MAP allowlist once silently dropped
+// The SDK's PREFIX_MAP allowlist must never silently drop
 // any backend PII pattern whose threat_type wasn't in the hardcoded list.
 // A newly-added `pii_ip_address` recognizer never redacted client-side even
 // though the backend was actively detecting it. Same bug MCP had; retired
@@ -197,7 +197,7 @@ describe('syncPIIPatterns — backend-owned prefix contract', () => {
   });
 
   it('falls back to threat_type-derived prefix when backend omits it (old backend)', async () => {
-    // Simulate a pre-2026-07-02 backend that doesn't ship the prefix field.
+    // Simulate a backend that doesn't ship the prefix field.
     // The client must NOT drop the pattern — instead derives IP_ADDRESS
     // from the threat_type. Different tag than a modern backend's `IP`,
     // but redaction still fires. That's the whole point: no silent drop.

@@ -1,5 +1,36 @@
 # Changelog
 
+## [4.3.0] - 2026-10-01
+
+### Added
+- **The adapters report what became of a governed action.** A scan proves
+  an action was authorized, never that it ran. The LangGraph and Vercel AI
+  wrappers now report `executed` when the tool returns and `failed` when it
+  throws, and the Claude Agent SDK adapter registers `PostToolUse` and
+  `PostToolUseFailure` and pairs the outcome with the call by `tool_use_id`.
+  The report names the scan by the `scan_id` the verdict carries and
+  carries a status only, never the tool's result or error text. A refusal
+  never runs the handler and reports nothing. An unreported action reads as
+  unconfirmed on the Shrike Agents screen, which is what it is.
+- `ScanClient.reportOutcome(scanId, outcome, { exitStatus, source })` and
+  `ScanClient.reportHostOutcome({ host, outcome, tool, callId, contentHash,
+  reason, scanId })` for integrations that hold the outcome themselves.
+  Both are best effort and never throw. `Governance.reportOutcome(out,
+  outcome)` reports once per recorded decision. `ScanResult.scan_id` and
+  `Decision.scanId` are new fields.
+- `SessionLockedNotice` is exported as the third member of the
+  `ClientSessionRotation` union, so a locked session has a type of its own
+  instead of a rotation record with its rotation fields left unset.
+
+### Fixed
+- **A locked session is no longer offered a new session id.** A lock means the
+  session is finished, so the record returned on a `session_locked` verdict now
+  carries no id to adopt. The two rotating records narrow `reason` to
+  `'risk_threshold_exceeded'`, the only value either can still carry, so a lock
+  and a rotation are distinguishable by type rather than by reading a string.
+  Recovery from a lock is self-release under a live declared scope, or an
+  operator.
+
 ## [4.2.0] - 2026-09-17
 
 ### Added
@@ -185,11 +216,11 @@ Cross-language SDK parity. The Python SDK ships `CircuitBreaker` + `retry_with_b
 
 ### Added
 - **Client-side PII redaction.** `redactPII()`, `rehydratePII()`, `getRedactionSummary()`, `updatePIIPatterns()`, and `getPIIPatternCount()` exported from the root entry point. Detects and tokenizes 20+ PII types (SSN, credit card, email, phone, address, medical record, wallet, etc.) BEFORE the prompt leaves customer environment — Shrike backend never sees the raw PII.
-- **`syncPIIPatterns({ endpoint, apiKey })`** — one-shot startup call fetches the canonical Presidio-derived pattern set from the Shrike backend so client-side detection stays uniform with the server-side scan. Fails safe: on any error (network / timeout / malformed) the bootstrap patterns stay in place; sync never blocks scans.
+- **`syncPIIPatterns({ endpoint, apiKey })`** — one-shot startup call fetches the canonical pattern set from the Shrike backend so client-side detection stays uniform with the server-side scan. Fails safe: on any error (network / timeout / malformed) the bootstrap patterns stay in place; sync never blocks scans.
 - **Backend-owned prefix contract.** The recognizer ships its client-side redaction tag (e.g. `[IP_1]`) as part of the pattern payload; the client uses it verbatim. When the backend omits the field (pre-2026-07-02 releases), the SDK derives the prefix from the threat_type. No pattern is ever silently dropped for an unmapped prefix. Adding a new backend pattern requires zero SDK changes.
 
 ### Why
-Client-side redaction removes PII before it crosses the network to Shrike's backend — defense-in-depth for HIPAA / PCI / GLBA / CMMC workloads on top of the BAA/DPA that already covers transmission. The `syncPIIPatterns` step keeps client patterns in step with backend patterns without shipping SDK updates every time Presidio adds a recognizer.
+Client-side redaction removes PII before it crosses the network to Shrike's backend — defense-in-depth for HIPAA / PCI / GLBA / CMMC workloads on top of the BAA/DPA that already covers transmission. The `syncPIIPatterns` step keeps client patterns in step with backend patterns without shipping SDK updates every time the backend adds a recognizer.
 
 ### Fixed
 - gemini-client test mock import matches the runtime `@google/genai` package (upstream renamed from `@google/generative-ai`).

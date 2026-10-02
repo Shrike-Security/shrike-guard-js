@@ -45,7 +45,15 @@ export class FakeGuard implements Guard {
     this.declared.push(row);
     return row;
   }
+  /** What the adapters reported became of each action. */
+  outcomes: Array<{ scanId: string; outcome: string; source?: string; exitStatus?: number }> = [];
+  async reportOutcome(scanId: string, outcome: 'executed' | 'failed' | 'skipped', options?: { exitStatus?: number; source?: string }) {
+    this.outcomes.push({ scanId, outcome, source: options?.source, exitStatus: options?.exitStatus });
+  }
 }
+
+/** An allow whose scan the backend kept a record of, so an outcome can name it. */
+export const ALLOW_WITH_ID = { ...(ALLOW as unknown as Record<string, unknown>), scan_id: 'scan_allow_1' } as unknown as ScanResult;
 
 export function refused(reason = 'widening'): Error {
   return new Error(`declareScope failed: 403 — {"reason":"${reason}"}`);
