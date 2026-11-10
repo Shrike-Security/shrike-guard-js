@@ -1,5 +1,25 @@
 # Changelog
 
+## [4.3.1] - 2026-11-10
+
+### Fixed
+- **A refusal tells the agent to change the action, not to give up.** The
+  block message said "do not retry it or work around it, report to the
+  operator", which left a refused agent with nothing to do but stop. It now
+  carries the backend's recovery text when there is one (a session lock, an
+  operator's stop) and otherwise says the same action will be refused again,
+  so change it rather than repeating it, and stop and report only when no
+  change fits the task.
+- **A starter's own `request_scope` reaches the backend.** Every framework
+  starter registers a `request_scope` tool so the model can ask for a tool
+  its declared scope does not hold. The LangChain middleware and the Claude
+  Agent SDK hook judged that tool like any other and refused it, and the
+  OpenAI Agents guardrail and the AI SDK wrapper did the same wherever the
+  tool sat behind them, so the model could never ask. The core now exempts
+  it when it is built, and the Claude adapter exempts it under its MCP name.
+  The exemption skips a scan of the request, never the decision: the backend
+  still refuses a request that does not narrow.
+
 ## [4.3.0] - 2026-10-01
 
 ### Added

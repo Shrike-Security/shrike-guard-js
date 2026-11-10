@@ -19,8 +19,8 @@
  * the first refusal. The result is an `Outcome`: `allow`, `warn` (allowed,
  * with an advisory for the model), `hold` (an operator must grant it) or
  * `deny` (blocked, or not checkable while failing closed). The message on a
- * hold or a deny is written for the model: the reason, the recovery, and the
- * instruction to stop and report rather than retry or work around.
+ * hold or a deny is written for the model: the reason, the recovery, and what
+ * to do next, which is to change the action rather than repeat it.
  *
  * `observePrompt` scans the person's prompt on the way in and never blocks
  * it. `requestScope` is the agent's one channel for asking for more than it
@@ -148,10 +148,16 @@ export function decisionMessage(d: Decision): string {
     );
   }
   if (d.tier === 'block') {
-    return `Shrike blocked this ${d.surface}: ${d.reason} Do not retry it or work around it. Report to the operator.`.replace(
-      ':  ',
-      ': '
-    );
+    // A refusal is a correction, not a wall: the backend's recovery text says
+    // what to do next when it has one (a lock, an operator's stop); otherwise
+    // the agent is told to change the action, since the same one will be
+    // refused again.
+    const head = `Shrike blocked this ${d.surface}`;
+    let text = d.reason ? `${head}: ${d.reason}` : `${head}.`;
+    text += d.recovery
+      ? ` ${d.recovery}`
+      : ' The same action will be refused again, so change it rather than repeating it. If no change fits the task, stop and report to the operator.';
+    return text;
   }
   let text = `Shrike held this ${d.surface}: ${d.reason}`.trimEnd();
   if (d.recovery) text += ` ${d.recovery}`;
@@ -332,6 +338,10 @@ export class Governance {
     this.observe = options.observe ?? true;
     this.onDecision = options.onDecision;
     this.onUnmapped = onUnmapped;
+    // The starter's own scope tool asks the backend, which decides every
+    // request it makes. Judged here it would be refused as unmapped, and the
+    // model could never ask for more than it holds.
+    this.exempt(REQUEST_SCOPE_NAME);
     for (const [name, spec] of Object.entries(options.tools ?? {})) {
       this.mapTool(name, typeof spec === 'string' ? { surface: spec } : spec);
     }

@@ -112,6 +112,8 @@ export class Governance extends CoreGovernance {
 
   constructor(guard: Guard | ScanClient, options: GovernanceOptions) {
     super(guard, { ...options, tools: { ...DEFAULT_TOOLS, ...(options.tools ?? {}) }, onUnmapped: options.onUnmapped ?? 'authorize' });
+    // The hook sees the scope tool under its MCP name.
+    this.exempt(REQUEST_SCOPE_TOOL);
   }
 
   /** The act-plane hook. Returns the SDK's hook output. */

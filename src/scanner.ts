@@ -26,7 +26,7 @@ import { VERSION } from './version';
  * Phase 8b: Client-side size limits to fail fast before network round-trip.
  * These limits match the backend limits for consistency.
  */
-const MAX_CONTENT_SIZE = 100 * 1024; // 100KB - matches backend MaxRequestBodySize
+const MAX_CONTENT_SIZE = 100 * 1024; // 100KB: the most content one scan reads
 
 /**
  * Result from a scan operation.

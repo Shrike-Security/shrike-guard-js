@@ -54,6 +54,15 @@ async function checkScope(mod: any) {
   expect(res.message.startsWith('Refused (widening)')).toBe(true);
 }
 
+/** The starter's own request_scope reaches the backend through its own hook:
+ * a guard that blocks everything is never asked about it. */
+async function checkScopeToolPasses(mod: any, drive: Driver, name = 'request_scope') {
+  const gov = build(mod, BLOCK);
+  const [result, message] = await drive(gov, name, { tools: ['command'], reason: 'x' });
+  expect([result, message]).toEqual(['allowed', '']);
+  expect((gov.guard as FakeGuard).calls).toEqual([]);
+}
+
 // --- Claude Agent SDK ----------------------------------------------------------
 //
 // The Claude Agent SDK package is ESM-only, which ts-jest's CommonJS transform
@@ -80,6 +89,7 @@ describe('claude-agent', () => {
   it('unmapped, scope, and wiring', async () => {
     await checkUnmapped(claude, claudeDrive);
     await checkScope(claude);
+    await checkScopeToolPasses(claude, claudeDrive, claude.REQUEST_SCOPE_TOOL);
     const gov = build(claude, ALLOW);
     // No matcher string: the gate sees every tool the agent can call, not
     // only the ones this SDK knows how to read. Naming tools narrows it.
@@ -120,6 +130,7 @@ describe('openai-agents', () => {
   it('unmapped, scope, and wiring', async () => {
     await checkUnmapped(openai, openaiDrive);
     await checkScope(openai);
+    await checkScopeToolPasses(openai, openaiDrive);
     const { Agent, tool } = require('@openai/agents');
     const { z } = require('zod');
     const runQuery = tool({ name: 'run_query', description: 'Run a query.', parameters: z.object({ query: z.string() }), execute: async ({ query }: { query: string }) => query });
@@ -157,6 +168,7 @@ describe('ai', () => {
   it('unmapped, scope, tool, and the observe middleware', async () => {
     await checkUnmapped(ai, aiDrive);
     await checkScope(ai);
+    await checkScopeToolPasses(ai, aiDrive);
     const gov = build(ai, ALLOW);
     expect(typeof gov.tool.execute).toBe('function');
     expect((await gov.tool.execute({ tools: ['command'] }, { toolCallId: 'c', messages: [] })).startsWith('Scope now:')).toBe(true);
@@ -192,6 +204,7 @@ describe('langchain', () => {
   it('unmapped, scope, wrapped tools, and the middleware', async () => {
     await checkUnmapped(langchain, langchainDrive);
     await checkScope(langchain);
+    await checkScopeToolPasses(langchain, langchainDrive);
     const { tool } = require('@langchain/core/tools');
     const { z } = require('zod');
     const runQuery = tool(async ({ query }: { query: string }) => `ran:${query}`, { name: 'run_query', description: 'Run a query.', schema: z.object({ query: z.string() }) });

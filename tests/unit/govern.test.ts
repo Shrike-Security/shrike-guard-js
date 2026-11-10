@@ -3,7 +3,7 @@
  * Contract-symmetric with tests/test_govern.py on the Python SDK.
  */
 
-import { Governance, decisionMessage, readVerdict, serializeArguments, type Decision } from '../../src/govern';
+import { Governance, REQUEST_SCOPE_NAME, decisionMessage, readVerdict, serializeArguments, type Decision } from '../../src/govern';
 import type { ScanResult } from '../../src/scanner';
 import { ALLOW, BLOCK, FakeGuard, HOLD, WARN, refused } from './govern.fixtures';
 
@@ -57,6 +57,14 @@ describe('outcomes', () => {
     const out = await gov(WARN).mapTool('run', { surface: 'command', arg: 'cmd' }).evaluate('run', { cmd: 'ls' });
     expect(out.advisories).toEqual(['Shrike advisory on this command: unusual path']);
   });
+  it('a block carries the recovery, or says to change the action', async () => {
+  const bare = await gov(BLOCK).mapTool('run', { surface: 'command', arg: 'cmd' }).evaluate('run', { cmd: 'ls' });
+  expect(bare.message).toContain('change it rather than repeating it');
+  expect(bare.message).not.toContain('Do not retry');
+  const stopped = { ...BLOCK, recovery: { instruction: 'An operator stopped this agent. Wait.' } } as unknown as ScanResult;
+  const out = await gov(stopped).mapTool('run', { surface: 'command', arg: 'cmd' }).evaluate('run', { cmd: 'ls' });
+  expect(out.message).toBe('Shrike blocked this command: exfil pattern An operator stopped this agent. Wait.');
+});
 
   it('a hold names the axis and the recovery', async () => {
     const out = await gov(HOLD).mapTool('run', { surface: 'command', arg: 'cmd' }).evaluate('run', { cmd: 'ls' });
@@ -89,6 +97,14 @@ describe('outcomes', () => {
     expect(out.decision).toBe('allow');
     expect(guard.calls).toEqual([]);
     expect(out.decisions[0].reason).toBe('exempt by mapping');
+  });
+
+  it('the scope tool is never refused by its own gate', async () => {
+    // The backend decides a scope request; the gate must let the call reach it.
+    const guard = new FakeGuard(BLOCK);
+    const out = await new Governance(guard, { agentId: 'a' }).evaluate(REQUEST_SCOPE_NAME, { tools: ['command'] });
+    expect(out.decision).toBe('allow');
+    expect(guard.calls).toEqual([]);
   });
 });
 
